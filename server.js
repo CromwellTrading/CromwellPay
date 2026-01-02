@@ -20,12 +20,9 @@ console.log('🔧 === INICIANDO CROMWELL PAY ===');
 console.log('📊 Puerto:', PORT);
 
 // Verificar variables críticas
-const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
-const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
-
-if (missingVars.length > 0) {
-    console.error('🚨 ERROR: Variables de entorno faltantes:', missingVars.join(', '));
-    console.error('💡 Asegúrate de crear un archivo .env con las variables necesarias');
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+    console.error('🚨 ERROR: Variables de Supabase faltantes');
+    console.error('💡 Crea un archivo .env con SUPABASE_URL y SUPABASE_SERVICE_KEY');
     process.exit(1);
 }
 
@@ -38,19 +35,27 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 console.log('✅ Supabase inicializado');
 
 // ============================================
-// CONFIGURACIÓN EMAIL CON GMAIL
+// CONFIGURACIÓN EMAIL MEJORADA
 // ============================================
 let transporter = null;
 if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    console.log('📧 Configurando email...');
+    
     transporter = nodemailer.createTransport({
-        service: 'gmail',
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false, // true para 465, false para otros puertos
         auth: {
             user: process.env.EMAIL_USER,
             pass: process.env.EMAIL_PASS
         },
         tls: {
-            rejectUnauthorized: false
-        }
+            rejectUnauthorized: false,
+            ciphers: 'SSLv3'
+        },
+        connectionTimeout: 10000, // 10 segundos timeout
+        greetingTimeout: 10000,
+        socketTimeout: 10000
     });
     
     // Verificar conexión del transporte
@@ -58,12 +63,13 @@ if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
         if (error) {
             console.error('❌ Error configuración email:', error.message);
             console.log('⚠️  Usando modo consola para códigos de verificación');
+            transporter = null; // Desactivar transporter
         } else {
             console.log('✅ Email configurado correctamente');
         }
     });
 } else {
-    console.log('⚠️  Email no configurado - usando consola para códigos');
+    console.log('⚠️  Variables de email no configuradas - usando modo consola');
 }
 
 // ============================================
@@ -79,7 +85,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Logs de solicitudes
 app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log(`${new Date().toLocaleString()} - ${req.method} ${req.url}`);
     next();
 });
 
@@ -124,7 +130,7 @@ async function sendVerificationEmail(email, code) {
     if (!transporter) {
         console.log(`📧 [MODO CONSOLA] Código para ${email}: ${code}`);
         console.log(`📧 [MODO CONSOLA] El código expira en 15 minutos`);
-        return { success: true, mode: 'console' };
+        return { success: true, mode: 'console', code: code };
     }
 
     try {
@@ -169,17 +175,17 @@ async function sendVerificationEmail(email, code) {
         };
 
         await transporter.sendMail(mailOptions);
-        console.log(`✅ Email de verificación enviado a: ${email}`);
-        return { success: true, mode: 'email' };
+        console.log(`✅ Email enviado a: ${email}`);
+        return { success: true, mode: 'email', code: code };
     } catch (error) {
         console.error('❌ Error enviando email:', error.message);
         console.log(`📧 [FALLBACK] Código para ${email}: ${code}`);
-        return { success: true, mode: 'fallback' };
+        return { success: true, mode: 'fallback', code: code };
     }
 }
 
 // ============================================
-// CREAR ADMIN AL INICIAR
+// CREAR ADMIN AL INICIAR (VERSIÓN MEJORADA)
 // ============================================
 async function createAdminIfNotExists() {
     try {
@@ -194,48 +200,45 @@ async function createAdminIfNotExists() {
             .eq('email', adminEmail)
             .single();
             
-        if (fetchError && fetchError.code !== 'PGRST116') {
-            console.error('❌ Error verificando admin:', fetchError.message);
-            return;
-        }
-        
-        if (admin) {
+        if (fetchError) {
+            // Si no existe el usuario, crear
+            console.log('👤 Creando admin...');
+            const hashedPassword = await bcrypt.hash('V3ry$tr0ngP@$$w0rd_2024@Admin', 10);
+            
+            const adminData = {
+                user_id: 'CROM-0001',
+                email: adminEmail,
+                password_hash: hashedPassword,
+                verified: true,
+                role: 'admin',
+                cwt: 1000,
+                cws: 5000,
+                nickname: 'Admin Cromwell',
+                phone: 'N/A',
+                province: 'Admin',
+                accepted_terms: true
+            };
+            
+            const { error: insertError } = await supabase
+                .from('users')
+                .insert([adminData]);
+
+            if (insertError) {
+                console.error('❌ Error creando admin:', insertError.message);
+                return;
+            }
+            
+            console.log('========================================');
+            console.log('✅ ADMIN CREADO EXITOSAMENTE');
+            console.log('📧 Email:', adminEmail);
+            console.log('🔑 Contraseña: V3ry$tr0ngP@$$w0rd_2024@Admin');
+            console.log('========================================');
+        } else {
             console.log('✅ Admin ya existe:', adminEmail);
-            return;
         }
-        
-        // Crear admin
-        console.log('👤 Creando admin...');
-        const hashedPassword = await bcrypt.hash('V3ry$tr0ngP@$$w0rd_2024@Admin', 10);
-        
-        const { error: insertError } = await supabase.from('users').insert([{
-            user_id: 'CROM-0001',
-            email: adminEmail,
-            password_hash: hashedPassword,
-            verified: true,
-            role: 'admin',
-            cwt: 1000,
-            cws: 5000,
-            nickname: 'Admin Cromwell',
-            phone: 'N/A',
-            province: 'Admin',
-            accepted_terms: true,
-            created_at: new Date().toISOString()
-        }]);
-        
-        if (insertError) {
-            console.error('❌ Error creando admin:', insertError.message);
-            return;
-        }
-        
-        console.log('========================================');
-        console.log('✅ ADMIN CREADO EXITOSAMENTE');
-        console.log('📧 Email:', adminEmail);
-        console.log('🔑 Contraseña: V3ry$tr0ngP@$$w0rd_2024@Admin');
-        console.log('========================================');
         
     } catch (error) {
-        console.error('⚠️  Error creando admin:', error.message);
+        console.error('⚠️  Error verificando admin:', error.message);
     }
 }
 
@@ -258,17 +261,24 @@ app.get('/dashboard.html', authenticateToken, (req, res) => {
 // API ENDPOINTS - AUTENTICACIÓN
 // ============================================
 
-// 1. REGISTRO
+// 1. REGISTRO (VERSIÓN CORREGIDA)
 app.post('/api/register', async (req, res) => {
     console.log('📝 Registro:', req.body.email);
     
     try {
         const { email, password, termsAccepted } = req.body;
 
-        if (!email || !password || !termsAccepted) {
+        if (!email || !password) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'Completa todos los campos y acepta los términos' 
+                message: 'Email y contraseña requeridos' 
+            });
+        }
+
+        if (!termsAccepted) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Debes aceptar los términos y condiciones' 
             });
         }
 
@@ -288,16 +298,14 @@ app.post('/api/register', async (req, res) => {
             });
         }
 
+        const emailLower = email.toLowerCase();
+
         // Verificar si existe
-        const { data: existingUser, error: fetchError } = await supabase
+        const { data: existingUser } = await supabase
             .from('users')
             .select('email')
-            .eq('email', email.toLowerCase())
-            .single();
-
-        if (fetchError && fetchError.code !== 'PGRST116') {
-            console.error('❌ Error verificando usuario:', fetchError);
-        }
+            .eq('email', emailLower)
+            .maybeSingle();
 
         if (existingUser) {
             return res.status(400).json({ 
@@ -312,16 +320,16 @@ app.post('/api/register', async (req, res) => {
         
         const newUser = {
             user_id: userId,
-            email: email.toLowerCase(),
+            email: emailLower,
             password_hash: hashedPassword,
             verified: false,
             role: 'user',
             cwt: 0,
             cws: 0,
-            accepted_terms: true,
-            created_at: new Date().toISOString()
+            accepted_terms: true
         };
 
+        console.log('👤 Insertando usuario:', userId);
         const { error: insertError } = await supabase
             .from('users')
             .insert([newUser]);
@@ -332,13 +340,13 @@ app.post('/api/register', async (req, res) => {
             if (insertError.code === '42501') {
                 return res.status(500).json({ 
                     success: false, 
-                    message: 'Error de permisos en la base de datos' 
+                    message: 'Error de permisos en la base de datos. Verifica las políticas RLS.' 
                 });
             }
             
             return res.status(500).json({ 
                 success: false, 
-                message: 'Error al crear usuario' 
+                message: 'Error al crear usuario: ' + insertError.message 
             });
         }
 
@@ -346,21 +354,19 @@ app.post('/api/register', async (req, res) => {
         const verificationCode = generateVerificationCode();
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
         
+        console.log('🔐 Guardando código de verificación para:', emailLower);
         const { error: codeError } = await supabase
             .from('verification_codes')
             .insert([{
-                email: email.toLowerCase(),
+                email: emailLower,
                 code: verificationCode,
-                expires_at: expiresAt.toISOString(),
-                created_at: new Date().toISOString()
+                expires_at: expiresAt.toISOString()
             }]);
 
         if (codeError) {
             console.error('❌ Error guardando código:', codeError);
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Error al generar código de verificación' 
-            });
+            // No retornamos error aquí, porque el usuario ya fue creado
+            // Simplemente continuamos
         }
 
         // Enviar email
@@ -369,22 +375,25 @@ app.post('/api/register', async (req, res) => {
         let message = 'Registro exitoso. ';
         if (emailResult.mode === 'email') {
             message += 'Revisa tu correo para el código de verificación.';
-        } else {
+        } else if (emailResult.mode === 'console') {
             message += `Código de verificación (consola): ${verificationCode}`;
+        } else {
+            message += `Código de verificación: ${verificationCode}`;
         }
 
         res.json({ 
             success: true, 
             message: message,
             email: email,
-            userId: userId
+            userId: userId,
+            verificationCode: verificationCode // Enviar código en respuesta para desarrollo
         });
 
     } catch (error) {
         console.error('❌ Error en registro:', error);
         res.status(500).json({ 
             success: false, 
-            message: 'Error interno del servidor' 
+            message: 'Error interno del servidor: ' + error.message 
         });
     }
 });
@@ -403,14 +412,17 @@ app.post('/api/login', async (req, res) => {
             });
         }
 
+        const emailLower = email.toLowerCase();
+
         // Buscar usuario
         const { data: user, error: userError } = await supabase
             .from('users')
             .select('*')
-            .eq('email', email.toLowerCase())
-            .single();
+            .eq('email', emailLower)
+            .maybeSingle();
 
         if (userError || !user) {
+            console.log('❌ Usuario no encontrado:', emailLower);
             return res.status(401).json({ 
                 success: false, 
                 message: 'Credenciales incorrectas' 
@@ -420,6 +432,7 @@ app.post('/api/login', async (req, res) => {
         // Verificar contraseña
         const passwordMatch = await bcrypt.compare(password, user.password_hash);
         if (!passwordMatch) {
+            console.log('❌ Contraseña incorrecta para:', emailLower);
             return res.status(401).json({ 
                 success: false, 
                 message: 'Credenciales incorrectas' 
@@ -433,7 +446,8 @@ app.post('/api/login', async (req, res) => {
                 success: false, 
                 message: 'Email no verificado. Por favor verifica tu cuenta primero.',
                 needsVerification: true,
-                email: user.email
+                email: user.email,
+                userId: user.user_id
             });
         }
 
@@ -453,6 +467,7 @@ app.post('/api/login', async (req, res) => {
         // Remover contraseña del objeto de respuesta
         const { password_hash, ...userWithoutPassword } = user;
 
+        console.log('✅ Login exitoso:', user.email);
         res.json({
             success: true,
             message: 'Login exitoso',
@@ -483,33 +498,24 @@ app.post('/api/verify', async (req, res) => {
             });
         }
 
-        // Buscar código válido
+        const emailLower = email.toLowerCase();
+
+        // Buscar código válido (no usado y no expirado)
+        const now = new Date().toISOString();
         const { data: verification, error: codeError } = await supabase
             .from('verification_codes')
             .select('*')
-            .eq('email', email.toLowerCase())
+            .eq('email', emailLower)
             .eq('code', code)
             .eq('used', false)
-            .single();
+            .gt('expires_at', now) // expires_at > now
+            .maybeSingle();
 
         if (codeError || !verification) {
+            console.log('❌ Código inválido o expirado para:', emailLower);
             return res.status(400).json({ 
                 success: false, 
-                message: 'Código inválido o ya utilizado' 
-            });
-        }
-
-        // Verificar expiración
-        if (new Date(verification.expires_at) < new Date()) {
-            // Marcar como usado y eliminar
-            await supabase
-                .from('verification_codes')
-                .update({ used: true })
-                .eq('id', verification.id);
-            
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Código expirado. Solicita uno nuevo.' 
+                message: 'Código inválido, expirado o ya utilizado' 
             });
         }
 
@@ -523,14 +529,14 @@ app.post('/api/verify', async (req, res) => {
         const { data: user, error: userError } = await supabase
             .from('users')
             .update({ 
-                verified: true,
-                updated_at: new Date().toISOString()
+                verified: true
             })
-            .eq('email', email.toLowerCase())
+            .eq('email', emailLower)
             .select('*')
             .single();
 
         if (userError || !user) {
+            console.error('❌ Error verificando usuario:', userError);
             return res.status(500).json({ 
                 success: false, 
                 message: 'Error al verificar usuario' 
@@ -553,6 +559,7 @@ app.post('/api/verify', async (req, res) => {
         // Remover contraseña del objeto de respuesta
         const { password_hash, ...userWithoutPassword } = user;
 
+        console.log('✅ Usuario verificado:', user.email);
         res.json({
             success: true,
             message: '¡Email verificado exitosamente!',
@@ -581,12 +588,14 @@ app.post('/api/resend-code', async (req, res) => {
             });
         }
 
+        const emailLower = email.toLowerCase();
+
         // Verificar si el usuario existe
         const { data: user } = await supabase
             .from('users')
             .select('email, verified')
-            .eq('email', email.toLowerCase())
-            .single();
+            .eq('email', emailLower)
+            .maybeSingle();
 
         if (!user) {
             return res.status(400).json({ 
@@ -602,11 +611,11 @@ app.post('/api/resend-code', async (req, res) => {
             });
         }
 
-        // Eliminar códigos anteriores no usados
+        // Eliminar códigos anteriores no usados (opcional)
         await supabase
             .from('verification_codes')
             .update({ used: true })
-            .eq('email', email.toLowerCase())
+            .eq('email', emailLower)
             .eq('used', false);
 
         // Generar nuevo código
@@ -617,18 +626,14 @@ app.post('/api/resend-code', async (req, res) => {
         const { error: insertError } = await supabase
             .from('verification_codes')
             .insert([{
-                email: email.toLowerCase(),
+                email: emailLower,
                 code: verificationCode,
-                expires_at: expiresAt.toISOString(),
-                created_at: new Date().toISOString()
+                expires_at: expiresAt.toISOString()
             }]);
 
         if (insertError) {
             console.error('❌ Error guardando código:', insertError);
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Error al generar código' 
-            });
+            // Continuar aunque falle la base de datos
         }
 
         // Enviar email
@@ -643,7 +648,8 @@ app.post('/api/resend-code', async (req, res) => {
 
         res.json({ 
             success: true, 
-            message: message 
+            message: message,
+            verificationCode: verificationCode
         });
 
     } catch (error) {
@@ -739,8 +745,7 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             phone,
             province,
             wallet: wallet || null,
-            notifications: notifications !== false,
-            updated_at: new Date().toISOString()
+            notifications: notifications !== false
         };
 
         const { data: user, error } = await supabase
@@ -804,10 +809,10 @@ app.get('/api/admin/users', authenticateToken, adminOnly, async (req, res) => {
         }
 
         // Remover contraseñas
-        const sanitizedUsers = users.map(user => {
+        const sanitizedUsers = users ? users.map(user => {
             const { password_hash, ...userWithoutPassword } = user;
             return userWithoutPassword;
-        });
+        }) : [];
 
         res.json({
             success: true,
@@ -856,8 +861,7 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, adminOnly, async 
             .from('users')
             .update({
                 cwt: parseFloat(cwt),
-                cws: parseInt(cws),
-                updated_at: new Date().toISOString()
+                cws: parseInt(cws)
             })
             .eq('id', userId);
 
@@ -867,24 +871,6 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, adminOnly, async 
                 success: false, 
                 message: 'Error al actualizar saldo' 
             });
-        }
-
-        // Registrar la transacción
-        const { error: transactionError } = await supabase
-            .from('balance_transactions')
-            .insert({
-                user_id: userId,
-                admin_id: req.user.id,
-                old_cwt: currentUser.cwt,
-                new_cwt: cwt,
-                old_cws: currentUser.cws,
-                new_cws: cws,
-                note: note || 'Ajuste manual por administrador',
-                created_at: new Date().toISOString()
-            });
-
-        if (transactionError) {
-            console.error('❌ Error registrando transacción:', transactionError);
         }
 
         res.json({
@@ -909,33 +895,20 @@ app.get('/api/admin/stats', authenticateToken, adminOnly, async (req, res) => {
             .from('users')
             .select('*', { count: 'exact', head: true });
 
-        if (usersError) {
-            console.error('❌ Error contando usuarios:', usersError);
-        }
-
-        // Obtener totales de CWT y CWS
-        const { data: balances, error: balancesError } = await supabase
+        // Obtener todos los usuarios para calcular totales
+        const { data: users, error: usersDataError } = await supabase
             .from('users')
             .select('cwt, cws');
 
         let totalCWT = 0;
         let totalCWS = 0;
 
-        if (!balancesError && balances) {
-            balances.forEach(user => {
+        if (users) {
+            users.forEach(user => {
                 totalCWT += parseFloat(user.cwt) || 0;
                 totalCWS += parseInt(user.cws) || 0;
             });
         }
-
-        // Obtener usuarios activos hoy
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const { count: activeToday, error: activeError } = await supabase
-            .from('users')
-            .select('*', { count: 'exact', head: true })
-            .gte('updated_at', today.toISOString());
 
         res.json({
             success: true,
@@ -943,10 +916,9 @@ app.get('/api/admin/stats', authenticateToken, adminOnly, async (req, res) => {
                 totalUsers: totalUsers || 0,
                 totalCWT: parseFloat(totalCWT.toFixed(2)),
                 totalCWS: totalCWS,
-                activeToday: activeToday || 0,
                 estimatedUSDT: parseFloat((totalCWT / 0.1 * 5).toFixed(2)),
                 estimatedSaldo: Math.round(totalCWS / 10 * 100),
-                lastUpdate: new Date().toISOString()
+                lastUpdate: new Date().toLocaleString()
             }
         });
 
@@ -960,73 +932,62 @@ app.get('/api/admin/stats', authenticateToken, adminOnly, async (req, res) => {
 });
 
 // ============================================
-// API ENDPOINTS - NOTIFICACIONES
-// ============================================
-
-// 11. OBTENER NOTIFICACIONES
-app.get('/api/notifications', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.id;
-
-        // Para simplificar, devolvemos notificaciones dummy
-        // En producción, tendrías una tabla de notificaciones
-        const notifications = [
-            {
-                id: 1,
-                title: '¡Bienvenido a Cromwell Pay!',
-                message: 'Tu cuenta ha sido creada exitosamente. Ahora puedes empezar a recargar y ganar tokens.',
-                read: true,
-                created_at: new Date().toISOString()
-            },
-            {
-                id: 2,
-                title: 'Recuerda verificar tu email',
-                message: 'Para acceder a todas las funciones, verifica tu dirección de email.',
-                read: false,
-                created_at: new Date().toISOString()
-            }
-        ];
-
-        res.json({
-            success: true,
-            notifications
-        });
-
-    } catch (error) {
-        console.error('❌ Error obteniendo notificaciones:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// ============================================
 // ENDPOINTS AUXILIARES
 // ============================================
 
-// 12. ESTADO DEL SERVIDOR
+// 11. ESTADO DEL SERVIDOR
 app.get('/api/status', (req, res) => {
     res.json({ 
         success: true, 
         status: 'online',
-        timestamp: new Date().toISOString(),
-        version: '1.0.0'
+        timestamp: new Date().toLocaleString(),
+        version: '1.0.0',
+        emailConfigured: !!transporter
     });
 });
 
-// 13. OBTENER CONFIGURACIÓN DEL SISTEMA
+// 12. CONFIGURACIÓN DEL SISTEMA
 app.get('/api/config', (req, res) => {
     res.json({
         success: true,
         config: {
             cwtMinimum: 1,
             cwsMinimum: 100,
-            cwtRate: 0.1, // 0.1 CWT por cada 5 USDT
-            cwsRate: 10, // 10 CWS por cada 100 saldo
+            cwtRate: 0.1,
+            cwsRate: 10,
             emailConfigured: !!transporter
         }
     });
+});
+
+// 13. VERIFICAR EMAIL EXISTENTE
+app.post('/api/check-email', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email requerido' });
+        }
+
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('email, verified')
+            .eq('email', email.toLowerCase())
+            .maybeSingle();
+
+        if (error) {
+            return res.json({ success: true, exists: false });
+        }
+
+        res.json({
+            success: true,
+            exists: !!user,
+            verified: user ? user.verified : false
+        });
+
+    } catch (error) {
+        res.json({ success: true, exists: false });
+    }
 });
 
 // ============================================
@@ -1057,22 +1018,6 @@ app.listen(PORT, async () => {
     
     // Crear admin si no existe
     await createAdminIfNotExists();
-    
-    // Verificar conexión a Supabase
-    try {
-        const { data, error } = await supabase
-            .from('users')
-            .select('count')
-            .limit(1);
-            
-        if (error) {
-            console.error('⚠️  Advertencia: Error conectando a Supabase:', error.message);
-        } else {
-            console.log('✅ Conexión a Supabase: OK');
-        }
-    } catch (error) {
-        console.error('⚠️  Advertencia: No se pudo verificar Supabase:', error.message);
-    }
     
     console.log('✅ Sistema listo para recibir peticiones');
     console.log('🔗 URL Local: http://localhost:' + PORT);
