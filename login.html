@@ -1,0 +1,1542 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cromwell Pay | Login Seguro</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800&family=Exo+2:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #00ff9d;
+            --primary-dark: #00cc7a;
+            --secondary: #6c63ff;
+            --secondary-dark: #4a43d6;
+            --accent: #ff3e80;
+            --dark: #0a0a0a;
+            --dark-light: #1a1a1a;
+            --neon-glow: 0 0 15px var(--primary);
+            --font-heading: 'Orbitron', sans-serif;
+            --font-body: 'Exo 2', sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--dark);
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Fondo con efecto de red blockchain */
+        .blockchain-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(circle at 20% 50%, rgba(0, 255, 157, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 80% 20%, rgba(108, 99, 255, 0.05) 0%, transparent 40%);
+            z-index: -2;
+            overflow: hidden;
+        }
+
+        .blockchain-grid {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(90deg, rgba(0, 255, 157, 0.03) 1px, transparent 1px),
+                linear-gradient(rgba(0, 255, 157, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: gridMove 30s linear infinite;
+        }
+
+        /* Contenedor principal */
+        .login-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Formulario principal */
+        .login-container {
+            position: relative;
+            z-index: 100;
+            width: 100%;
+            padding: 40px;
+            background: rgba(15, 15, 20, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 
+                0 25px 50px rgba(0, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1),
+                0 0 0 1px rgba(0, 255, 157, 0.05);
+            overflow: hidden;
+        }
+
+        /* Línea de escaneo */
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--primary), transparent);
+            animation: scan 4s linear infinite;
+            opacity: 0.5;
+            z-index: 1;
+        }
+
+        /* Logo Cromwell */
+        .logo-container {
+            text-align: center;
+            margin-bottom: 40px;
+            position: relative;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: transparent;
+            background: linear-gradient(45deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            text-shadow: 0 0 30px rgba(0, 255, 157, 0.5);
+            font-family: var(--font-heading);
+            letter-spacing: 1px;
+        }
+
+        .coin-icon {
+            position: relative;
+            width: 50px;
+            height: 50px;
+            animation: coinFloat 3s ease-in-out infinite;
+            filter: drop-shadow(0 0 10px var(--primary));
+        }
+
+        .coin-icon i {
+            font-size: 2.5rem;
+            color: var(--primary);
+            position: relative;
+            z-index: 2;
+        }
+
+        .coin-icon::before {
+            content: '';
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, rgba(0, 255, 157, 0.3), transparent 70%);
+            animation: pulseGlow 2s infinite;
+            z-index: 1;
+        }
+
+        .logo-subtitle {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.6);
+            letter-spacing: 3px;
+            margin-top: 10px;
+            text-transform: uppercase;
+            font-weight: 300;
+            font-family: var(--font-heading);
+        }
+
+        /* Selector de modo (Login/Registro/Verificación) */
+        .mode-selector {
+            display: flex;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 5px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 15px;
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.6);
+            font-family: var(--font-heading);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+
+        .mode-btn.active {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: var(--dark);
+            box-shadow: 0 5px 15px rgba(0, 255, 157, 0.2);
+        }
+
+        /* Campos de formulario */
+        .form-group {
+            position: relative;
+            margin-bottom: 25px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: rgba(255, 255, 255, 0.8);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            font-family: var(--font-heading);
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 18px 20px 18px 50px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1.05rem;
+            transition: all 0.3s ease;
+            outline: none;
+            font-family: var(--font-body);
+        }
+
+        .form-input:focus {
+            border-color: var(--primary);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 0 3px rgba(0, 255, 157, 0.1);
+        }
+
+        .input-icon {
+            position: absolute;
+            left: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--primary);
+            font-size: 1.2rem;
+            z-index: 1;
+            transition: all 0.3s ease;
+        }
+
+        .form-input:focus + .input-icon {
+            color: var(--accent);
+            transform: translateY(-50%) scale(1.2);
+        }
+
+        /* Input de código de verificación especial */
+        .verification-input {
+            font-family: 'Courier New', monospace;
+            font-size: 1.5rem;
+            letter-spacing: 10px;
+            text-align: center;
+            padding: 15px;
+        }
+
+        .verification-hint {
+            text-align: center;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 10px;
+        }
+
+        .verification-hint .highlight {
+            color: var(--primary);
+            font-weight: bold;
+        }
+
+        /* Checkbox de recordar y términos */
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 25px;
+        }
+
+        .checkbox-custom {
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .checkbox-custom.checked {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .checkbox-custom.checked i {
+            color: var(--dark);
+            font-size: 0.8rem;
+        }
+
+        .checkbox-label {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        .terms-link {
+            color: var(--primary);
+            text-decoration: none;
+            border-bottom: 1px dashed var(--primary);
+            transition: all 0.3s ease;
+        }
+
+        .terms-link:hover {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        /* Botones de acción */
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .action-btn {
+            flex: 1;
+            padding: 18px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: var(--font-heading);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .action-btn.primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: var(--dark);
+        }
+
+        .action-btn.secondary {
+            background: rgba(108, 99, 255, 0.1);
+            color: var(--secondary);
+            border: 1px solid rgba(108, 99, 255, 0.3);
+        }
+
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .action-btn:hover:not(:disabled) {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        }
+
+        .action-btn.primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+        }
+
+        .action-btn.secondary:hover:not(:disabled) {
+            background: rgba(108, 99, 255, 0.2);
+        }
+
+        /* Contador de reenvío */
+        .resend-timer {
+            text-align: center;
+            margin-top: 20px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.9rem;
+        }
+
+        .resend-link {
+            color: var(--primary);
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .resend-link:hover:not(.disabled) {
+            color: var(--accent);
+            text-decoration: underline;
+        }
+
+        .resend-link.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Modal de Términos y Condiciones */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(10px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .terms-modal {
+            background: var(--dark-light);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 40px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 1px solid rgba(0, 255, 157, 0.3);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+            animation: modalSlide 0.4s ease;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .modal-title {
+            font-family: var(--font-heading);
+            font-size: 1.8rem;
+            color: var(--primary);
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: color 0.3s ease;
+        }
+
+        .close-modal:hover {
+            color: var(--accent);
+        }
+
+        .terms-content {
+            line-height: 1.6;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .terms-section {
+            margin-bottom: 25px;
+        }
+
+        .terms-section h3 {
+            color: var(--primary);
+            margin-bottom: 10px;
+            font-family: var(--font-heading);
+            font-size: 1.2rem;
+        }
+
+        .terms-section p {
+            margin-bottom: 10px;
+            font-size: 0.95rem;
+        }
+
+        .highlight {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .warning-box {
+            background: rgba(255, 62, 128, 0.1);
+            border: 1px solid rgba(255, 62, 128, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .warning-box i {
+            color: var(--accent);
+            margin-right: 10px;
+        }
+
+        .terms-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 30px 0;
+        }
+
+        .terms-actions {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        /* Mensaje de estado */
+        .status-message {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.5);
+            min-height: 20px;
+            font-family: var(--font-body);
+        }
+
+        .status-success {
+            color: var(--primary) !important;
+        }
+
+        .status-error {
+            color: var(--accent) !important;
+        }
+
+        /* Aviso de seguridad */
+        .security-notice {
+            text-align: center;
+            margin-top: 25px;
+            padding: 15px;
+            background: rgba(0, 255, 157, 0.05);
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 157, 0.1);
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .security-notice i {
+            color: var(--primary);
+            margin-right: 8px;
+        }
+
+        /* Efecto de monedas flotantes */
+        .floating-coins {
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .floating-coin {
+            position: absolute;
+            font-size: 1.5rem;
+            color: var(--primary);
+            opacity: 0.2;
+            animation: floatCoin linear infinite;
+        }
+
+        /* Animaciones */
+        @keyframes coinFloat {
+            0%, 100% {
+                transform: translateY(0) rotate(0deg);
+            }
+            50% {
+                transform: translateY(-10px) rotate(5deg);
+            }
+        }
+
+        @keyframes pulseGlow {
+            0%, 100% {
+                opacity: 0.3;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.6;
+                transform: scale(1.1);
+            }
+        }
+
+        @keyframes floatCoin {
+            0% {
+                transform: translateY(100vh) rotate(0deg);
+                opacity: 0;
+            }
+            10% {
+                opacity: 0.3;
+            }
+            90% {
+                opacity: 0.3;
+            }
+            100% {
+                transform: translateY(-100px) rotate(360deg);
+                opacity: 0;
+            }
+        }
+
+        @keyframes scan {
+            0% {
+                top: 0;
+                opacity: 0;
+            }
+            10% {
+                opacity: 0.5;
+            }
+            90% {
+                opacity: 0.5;
+            }
+            100% {
+                top: 100%;
+                opacity: 0;
+            }
+        }
+
+        @keyframes gridMove {
+            0% {
+                background-position: 0 0;
+            }
+            100% {
+                background-position: 50px 50px;
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes modalSlide {
+            from { opacity: 0; transform: translateY(-50px) scale(0.9); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        /* Responsive */
+        @media (max-width: 500px) {
+            .login-container {
+                padding: 30px 25px;
+            }
+            
+            .logo {
+                font-size: 2rem;
+            }
+            
+            .coin-icon {
+                width: 40px;
+                height: 40px;
+            }
+            
+            .coin-icon i {
+                font-size: 2rem;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .terms-modal {
+                padding: 25px;
+            }
+            
+            .verification-input {
+                font-size: 1.2rem;
+                letter-spacing: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Fondo con efecto blockchain -->
+    <div class="blockchain-bg">
+        <div class="blockchain-grid"></div>
+    </div>
+    
+    <!-- Monedas flotantes -->
+    <div class="floating-coins" id="floatingCoins"></div>
+    
+    <!-- Contenedor principal -->
+    <div class="login-wrapper">
+        <div class="login-container">
+            <!-- Línea de escaneo -->
+            <div class="scan-line"></div>
+            
+            <!-- Logo Cromwell Pay -->
+            <div class="logo-container">
+                <div class="logo">
+                    <div class="coin-icon">
+                        <i class="fas fa-coins"></i>
+                    </div>
+                    CROMWELL PAY
+                </div>
+                <div class="logo-subtitle">Sistema de Recargas USDT y Saldo Móvil</div>
+            </div>
+            
+            <!-- Selector de modo -->
+            <div class="mode-selector">
+                <button class="mode-btn active" id="loginModeBtn">Iniciar Sesión</button>
+                <button class="mode-btn" id="registerModeBtn">Registrarse</button>
+                <button class="mode-btn" id="verifyModeBtn" style="display: none;">Verificar Email</button>
+            </div>
+            
+            <!-- Formulario de Login (visible por defecto) -->
+            <form id="loginForm" style="display: block;">
+                <div class="form-group">
+                    <label class="form-label">Correo Electrónico</label>
+                    <i class="fas fa-envelope input-icon"></i>
+                    <input type="email" id="loginEmail" class="form-input" placeholder="ejemplo@gmail.com" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Contraseña</label>
+                    <i class="fas fa-lock input-icon"></i>
+                    <input type="password" id="loginPassword" class="form-input" placeholder="••••••••••••" required>
+                </div>
+                
+                <div class="checkbox-group">
+                    <div class="checkbox-custom" id="rememberCheckbox">
+                        <i class="fas fa-check" style="display: none;"></i>
+                    </div>
+                    <label class="checkbox-label" for="rememberCheckbox">Recordar mi usuario</label>
+                </div>
+                
+                <div class="action-buttons">
+                    <button type="submit" class="action-btn primary" id="loginBtn">
+                        <i class="fas fa-sign-in-alt"></i> Iniciar Sesión
+                    </button>
+                </div>
+            </form>
+            
+            <!-- Formulario de Registro (oculto por defecto) -->
+            <form id="registerForm" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Correo Electrónico</label>
+                    <i class="fas fa-envelope input-icon"></i>
+                    <input type="email" id="registerEmail" class="form-input" placeholder="ejemplo@gmail.com" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Contraseña</label>
+                    <i class="fas fa-lock input-icon"></i>
+                    <input type="password" id="registerPassword" class="form-input" placeholder="Mínimo 6 caracteres" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Confirmar Contraseña</label>
+                    <i class="fas fa-lock input-icon"></i>
+                    <input type="password" id="registerConfirmPassword" class="form-input" placeholder="Repite tu contraseña" required>
+                </div>
+                
+                <div class="checkbox-group">
+                    <div class="checkbox-custom" id="termsCheckbox">
+                        <i class="fas fa-check" style="display: none;"></i>
+                    </div>
+                    <label class="checkbox-label">
+                        Acepto los <a href="#" class="terms-link" id="showTerms">Términos y Condiciones</a>
+                    </label>
+                </div>
+                
+                <div class="action-buttons">
+                    <button type="submit" class="action-btn primary" id="registerBtn">
+                        <i class="fas fa-user-plus"></i> Crear Cuenta
+                    </button>
+                </div>
+            </form>
+            
+            <!-- Formulario de Verificación (oculto por defecto) -->
+            <form id="verificationForm" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Código de Verificación</label>
+                    <i class="fas fa-key input-icon"></i>
+                    <input type="text" id="verificationCode" class="form-input verification-input" placeholder="123456" maxlength="6" required>
+                    <div class="verification-hint">
+                        Ingresa el código de 6 dígitos enviado a <span class="highlight" id="verificationEmailText"></span>
+                    </div>
+                </div>
+                
+                <div class="resend-timer">
+                    ¿No recibiste el código? 
+                    <a class="resend-link disabled" id="resendLink">Reenviar código</a>
+                    <span id="timerText" style="display: none;"> (espera <span id="countdown">60</span> segundos)</span>
+                </div>
+                
+                <div class="action-buttons">
+                    <button type="submit" class="action-btn primary" id="verifyBtn">
+                        <i class="fas fa-check-circle"></i> Verificar Cuenta
+                    </button>
+                    <button type="button" class="action-btn secondary" id="backToRegisterBtn">
+                        <i class="fas fa-arrow-left"></i> Volver
+                    </button>
+                </div>
+            </form>
+            
+            <div class="status-message" id="statusMessage">
+                Sistema seguro de recargas con tokens CWT y CWS
+            </div>
+            
+            <div class="security-notice">
+                <i class="fas fa-shield-alt"></i>
+                Conexión segura SSL - Tus datos están protegidos
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal de Términos y Condiciones -->
+    <div class="modal-overlay" id="termsModal">
+        <div class="terms-modal">
+            <div class="modal-header">
+                <h3 class="modal-title">TÉRMINOS Y CONDICIONES</h3>
+                <button class="close-modal" id="closeTerms">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="terms-content">
+                <div class="terms-section">
+                    <h3>1. ACEPTACIÓN DE TÉRMINOS</h3>
+                    <p>Al acceder y utilizar el servicio de Cromwell Pay, usted acepta estar sujeto a estos Términos y Condiciones. Si no está de acuerdo con alguna parte de los términos, no debe utilizar nuestro servicio.</p>
+                </div>
+                
+                <div class="terms-section">
+                    <h3>2. DEFINICIÓN DEL SERVICIO</h3>
+                    <p>Cromwell Pay es un sistema de recargas y recompensas que permite a los usuarios acumular tokens CWT (Cromwell Theter) y CWS (Cromwell Saldo) mediante recargas con USDT y saldo móvil.</p>
+                </div>
+                
+                <div class="warning-box">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p><strong>IMPORTANTE - CONDICIÓN NO NEGOCIABLE:</strong> El crédito acumulado en forma de tokens CWT y CWS <span class="highlight">NO ES RETIRABLE EN EFECTIVO NI EN CRIPTOMONEDAS</span>. Los tokens solo pueden ser utilizados exclusivamente para recargar otros juegos dentro del ecosistema Cromwell Pay.</p>
+                </div>
+                
+                <div class="terms-section">
+                    <h3>3. USO DE TOKENS</h3>
+                    <p>Los tokens CWT y CWS tienen las siguientes características:</p>
+                    <p>• <strong>CWT:</strong> Mínimo 1 token para poder utilizar. Generado por recargas USDT.</p>
+                    <p>• <strong>CWS:</strong> Mínimo 100 tokens para poder utilizar. Generado por recargas de saldo móvil.</p>
+                    <p>• Los tokens no tienen valor monetario fuera del ecosistema Cromwell Pay.</p>
+                    <p>• No son transferibles entre usuarios.</p>
+                    <p>• No pueden ser vendidos, comercializados o intercambiados por dinero.</p>
+                </div>
+                
+                <div class="terms-section">
+                    <h3>4. MODIFICACIÓN DE TÉRMINOS</h3>
+                    <p>Cromwell Pay se reserva el derecho de modificar estos Términos y Condiciones en cualquier momento. Los cambios entrarán en vigor inmediatamente después de su publicación en el sistema. Es responsabilidad del usuario revisar periódicamente los términos.</p>
+                    <p>El uso continuado del servicio después de cualquier modificación constituye la aceptación de los nuevos términos.</p>
+                </div>
+                
+                <div class="terms-section">
+                    <h3>5. RESPONSABILIDADES DEL USUARIO</h3>
+                    <p>El usuario se compromete a:</p>
+                    <p>• Proporcionar información veraz y actualizada.</p>
+                    <p>• Mantener la confidencialidad de sus credenciales de acceso.</p>
+                    <p>• Utilizar el servicio solo para fines lícitos.</p>
+                    <p>• No realizar actividades fraudulentas o que comprometan la seguridad del sistema.</p>
+                </div>
+                
+                <div class="terms-section">
+                    <h3>6. LIMITACIÓN DE RESPONSABILIDAD</h3>
+                    <p>Cromwell Pay no se hace responsable por:</p>
+                    <p>• Pérdida de tokens debido a errores del usuario.</p>
+                    <p>• Fallos en las transacciones de terceros (USDT o saldo móvil).</p>
+                    <p>• Cambios en los precios del mercado informal que afecten la conversión.</p>
+                    <p>• Uso indebido de las credenciales por parte del usuario.</p>
+                </div>
+                
+                <div class="terms-section">
+                    <h3>7. SUSPENSIÓN DEL SERVICIO</h3>
+                    <p>Cromwell Pay se reserva el derecho de suspender o terminar el acceso de cualquier usuario que:</p>
+                    <p>• Incumpla estos términos.</p>
+                    <p>• Realice actividades sospechosas o fraudulentas.</p>
+                    <p>• Intente manipular el sistema de tokens.</p>
+                </div>
+                
+                <div class="terms-checkbox">
+                    <div class="checkbox-custom" id="modalTermsCheckbox">
+                        <i class="fas fa-check" style="display: none;"></i>
+                    </div>
+                    <label class="checkbox-label">
+                        He leído y acepto todos los Términos y Condiciones establecidos anteriormente
+                    </label>
+                </div>
+                
+                <div class="terms-actions">
+                    <button class="action-btn secondary" id="rejectTerms">
+                        No Acepto
+                    </button>
+                    <button class="action-btn primary" id="acceptTerms">
+                        Acepto Términos
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // CONFIGURACIÓN DEL BACKEND
+        // ============================================
+        const API_BASE_URL = 'http://localhost:3000'; // Cambiar en producción
+        
+        // ============================================
+        // INICIALIZACIÓN Y CONFIGURACIÓN
+        // ============================================
+        document.addEventListener('DOMContentLoaded', function() {
+            let verificationEmail = '';
+            let resendTimer = null;
+            let countdown = 60;
+            
+            // ============================================
+            // MONEDAS FLOTANTES
+            // ============================================
+            const floatingCoins = document.getElementById('floatingCoins');
+            const coinTypes = ['CWT', 'CWS', 'USDT', '₿', 'Ξ'];
+            const maxCoins = 6;
+            
+            for (let i = 0; i < maxCoins; i++) {
+                setTimeout(() => {
+                    const coin = document.createElement('div');
+                    coin.className = 'floating-coin';
+                    
+                    if (i % 2 === 0) {
+                        coin.innerHTML = '<i class="fas fa-coins"></i>';
+                        coin.style.color = i % 3 === 0 ? 'var(--primary)' : 'var(--secondary)';
+                    } else {
+                        coin.textContent = coinTypes[Math.floor(Math.random() * coinTypes.length)];
+                        coin.style.fontFamily = 'var(--font-heading)';
+                        coin.style.fontWeight = 'bold';
+                        coin.style.fontSize = '1.2rem';
+                        coin.style.color = i % 3 === 0 ? 'var(--primary)' : 'var(--accent)';
+                    }
+                    
+                    coin.style.left = `${Math.random() * 100}%`;
+                    const duration = 20 + Math.random() * 25;
+                    const delay = Math.random() * 10;
+                    coin.style.animation = `floatCoin ${duration}s linear ${delay}s infinite`;
+                    
+                    floatingCoins.appendChild(coin);
+                    
+                    setTimeout(() => {
+                        if (coin.parentNode) {
+                            coin.parentNode.removeChild(coin);
+                        }
+                    }, (duration + delay) * 1000);
+                }, i * 800);
+            }
+            
+            // ============================================
+            // MANEJO DE CHECKBOXES
+            // ============================================
+            const checkboxes = document.querySelectorAll('.checkbox-custom');
+            checkboxes.forEach(checkbox => {
+                checkbox.addEventListener('click', function() {
+                    const isChecked = this.classList.contains('checked');
+                    
+                    if (isChecked) {
+                        this.classList.remove('checked');
+                        this.querySelector('i').style.display = 'none';
+                    } else {
+                        this.classList.add('checked');
+                        this.querySelector('i').style.display = 'block';
+                    }
+                });
+            });
+            
+            // ============================================
+            // CONTROL DE MODO (LOGIN/REGISTRO/VERIFICACIÓN)
+            // ============================================
+            const loginModeBtn = document.getElementById('loginModeBtn');
+            const registerModeBtn = document.getElementById('registerModeBtn');
+            const verifyModeBtn = document.getElementById('verifyModeBtn');
+            const loginForm = document.getElementById('loginForm');
+            const registerForm = document.getElementById('registerForm');
+            const verificationForm = document.getElementById('verificationForm');
+            
+            loginModeBtn.addEventListener('click', function() {
+                loginModeBtn.classList.add('active');
+                registerModeBtn.classList.remove('active');
+                verifyModeBtn.classList.remove('active');
+                loginForm.style.display = 'block';
+                registerForm.style.display = 'none';
+                verificationForm.style.display = 'none';
+                document.getElementById('statusMessage').textContent = 'Sistema seguro de recargas con tokens CWT y CWS';
+            });
+            
+            registerModeBtn.addEventListener('click', function() {
+                registerModeBtn.classList.add('active');
+                loginModeBtn.classList.remove('active');
+                verifyModeBtn.classList.remove('active');
+                registerForm.style.display = 'block';
+                loginForm.style.display = 'none';
+                verificationForm.style.display = 'none';
+                document.getElementById('statusMessage').textContent = 'Registro con términos y condiciones específicos';
+            });
+            
+            function showVerificationMode(email) {
+                verificationEmail = email;
+                verifyModeBtn.classList.add('active');
+                loginModeBtn.classList.remove('active');
+                registerModeBtn.classList.remove('active');
+                loginForm.style.display = 'none';
+                registerForm.style.display = 'none';
+                verificationForm.style.display = 'block';
+                document.getElementById('verificationEmailText').textContent = email;
+                document.getElementById('statusMessage').textContent = 'Verifica tu correo electrónico para activar tu cuenta';
+                
+                // Iniciar temporizador de reenvío
+                startResendTimer();
+            }
+            
+            // ============================================
+            // BOTÓN VOLVER DE VERIFICACIÓN
+            // ============================================
+            document.getElementById('backToRegisterBtn').addEventListener('click', function() {
+                verificationForm.style.display = 'none';
+                registerForm.style.display = 'block';
+                verifyModeBtn.style.display = 'none';
+                loginModeBtn.classList.remove('active');
+                registerModeBtn.classList.add('active');
+                document.getElementById('statusMessage').textContent = 'Registro con términos y condiciones específicos';
+            });
+            
+            // ============================================
+            // CONTROL DE TÉRMINOS Y CONDICIONES
+            // ============================================
+            const termsModal = document.getElementById('termsModal');
+            const showTermsBtn = document.getElementById('showTerms');
+            const closeTermsBtn = document.getElementById('closeTerms');
+            const acceptTermsBtn = document.getElementById('acceptTerms');
+            const rejectTermsBtn = document.getElementById('rejectTerms');
+            const modalTermsCheckbox = document.getElementById('modalTermsCheckbox');
+            
+            showTermsBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                termsModal.classList.add('active');
+            });
+            
+            closeTermsBtn.addEventListener('click', function() {
+                termsModal.classList.remove('active');
+            });
+            
+            rejectTermsBtn.addEventListener('click', function() {
+                termsModal.classList.remove('active');
+                modalTermsCheckbox.classList.remove('checked');
+                modalTermsCheckbox.querySelector('i').style.display = 'none';
+                document.getElementById('termsCheckbox').classList.remove('checked');
+                document.getElementById('termsCheckbox').querySelector('i').style.display = 'none';
+                showStatus('Debes aceptar los términos para registrarte', 'error');
+            });
+            
+            acceptTermsBtn.addEventListener('click', function() {
+                if (modalTermsCheckbox.classList.contains('checked')) {
+                    termsModal.classList.remove('active');
+                    document.getElementById('termsCheckbox').classList.add('checked');
+                    document.getElementById('termsCheckbox').querySelector('i').style.display = 'block';
+                    showStatus('Términos aceptados. Puedes completar tu registro.', 'success');
+                } else {
+                    showStatus('Debes marcar la casilla de aceptación', 'error');
+                }
+            });
+            
+            modalTermsCheckbox.addEventListener('click', function() {
+                const isChecked = this.classList.contains('checked');
+                
+                if (isChecked) {
+                    this.classList.remove('checked');
+                    this.querySelector('i').style.display = 'none';
+                } else {
+                    this.classList.add('checked');
+                    this.querySelector('i').style.display = 'block';
+                }
+            });
+            
+            // ============================================
+            // SISTEMA DE REGISTRO CON ENVÍO DE VERIFICACIÓN
+            // ============================================
+            registerForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const email = document.getElementById('registerEmail').value.trim();
+                const password = document.getElementById('registerPassword').value;
+                const confirmPassword = document.getElementById('registerConfirmPassword').value;
+                const acceptedTerms = document.getElementById('termsCheckbox').classList.contains('checked');
+                
+                // Validaciones
+                if (!email || !password || !confirmPassword) {
+                    showStatus('❌ Completa todos los campos', 'error');
+                    shakeElement(registerForm);
+                    return;
+                }
+                
+                if (password.length < 6) {
+                    showStatus('❌ La contraseña debe tener al menos 6 caracteres', 'error');
+                    document.getElementById('registerPassword').classList.add('error');
+                    shakeElement(document.getElementById('registerPassword'));
+                    return;
+                }
+                
+                if (password !== confirmPassword) {
+                    showStatus('❌ Las contraseñas no coinciden', 'error');
+                    document.getElementById('registerConfirmPassword').classList.add('error');
+                    shakeElement(document.getElementById('registerConfirmPassword'));
+                    return;
+                }
+                
+                if (!acceptedTerms) {
+                    showStatus('❌ Debes aceptar los términos y condiciones', 'error');
+                    shakeElement(registerForm);
+                    return;
+                }
+                
+                // Validar formato email
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(email)) {
+                    showStatus('❌ Email no válido', 'error');
+                    document.getElementById('registerEmail').classList.add('error');
+                    shakeElement(document.getElementById('registerEmail'));
+                    return;
+                }
+                
+                // Efecto de carga
+                const registerBtn = document.getElementById('registerBtn');
+                const originalText = registerBtn.innerHTML;
+                registerBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ENVIANDO VERIFICACIÓN...';
+                registerBtn.disabled = true;
+                
+                // Enviar solicitud al backend
+                fetch(`${API_BASE_URL}/api/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email, 
+                        password,
+                        termsAccepted: true 
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Registro exitoso, mostrar formulario de verificación
+                        showStatus('✅ Cuenta creada. Revisa tu correo para el código de verificación.', 'success');
+                        showVerificationMode(email);
+                        
+                        // Mostrar botón de verificación en el selector
+                        verifyModeBtn.style.display = 'block';
+                    } else {
+                        // Error en el registro
+                        showStatus(`❌ ${data.message}`, 'error');
+                        registerBtn.innerHTML = originalText;
+                        registerBtn.disabled = false;
+                        shakeElement(registerForm);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showStatus('❌ Error de conexión con el servidor', 'error');
+                    registerBtn.innerHTML = originalText;
+                    registerBtn.disabled = false;
+                });
+            });
+            
+            // ============================================
+            // SISTEMA DE VERIFICACIÓN DE EMAIL
+            // ============================================
+            verificationForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const code = document.getElementById('verificationCode').value.trim();
+                
+                if (!code || code.length !== 6) {
+                    showStatus('❌ El código debe tener 6 dígitos', 'error');
+                    shakeElement(document.getElementById('verificationCode'));
+                    return;
+                }
+                
+                const verifyBtn = document.getElementById('verifyBtn');
+                const originalText = verifyBtn.innerHTML;
+                verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> VERIFICANDO...';
+                verifyBtn.disabled = true;
+                
+                // Enviar solicitud al backend
+                fetch(`${API_BASE_URL}/api/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email: verificationEmail, 
+                        code 
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Verificación exitosa
+                        showStatus('✅ ¡Cuenta verificada exitosamente!', 'success');
+                        verifyBtn.innerHTML = '<i class="fas fa-check"></i> ¡VERIFICADO!';
+                        verifyBtn.style.background = 'linear-gradient(135deg, #00cc7a, #00a865)';
+                        
+                        // Auto-login después de verificación exitosa
+                        setTimeout(() => {
+                            // Realizar login automático
+                            performAutoLogin(verificationEmail);
+                        }, 1500);
+                    } else {
+                        // Error en la verificación
+                        showStatus(`❌ ${data.message}`, 'error');
+                        verifyBtn.innerHTML = originalText;
+                        verifyBtn.disabled = false;
+                        shakeElement(document.getElementById('verificationCode'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showStatus('❌ Error de conexión con el servidor', 'error');
+                    verifyBtn.innerHTML = originalText;
+                    verifyBtn.disabled = false;
+                });
+            });
+            
+            // ============================================
+            // REENVÍO DE CÓDIGO DE VERIFICACIÓN
+            // ============================================
+            document.getElementById('resendLink').addEventListener('click', function() {
+                if (this.classList.contains('disabled')) return;
+                
+                showStatus('Reenviando código de verificación...', 'info');
+                
+                fetch(`${API_BASE_URL}/api/resend-code`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email: verificationEmail 
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showStatus('✅ Código reenviado. Revisa tu correo.', 'success');
+                        startResendTimer();
+                    } else {
+                        showStatus(`❌ ${data.message}`, 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showStatus('❌ Error de conexión con el servidor', 'error');
+                });
+            });
+            
+            // ============================================
+            // SISTEMA DE LOGIN (SOLO PARA CUENTAS VERIFICADAS)
+            // ============================================
+            loginForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const email = document.getElementById('loginEmail').value.trim();
+                const password = document.getElementById('loginPassword').value;
+                const rememberUser = document.getElementById('rememberCheckbox').classList.contains('checked');
+                
+                // Validación básica
+                if (!email || !password) {
+                    showStatus('❌ Completa todos los campos', 'error');
+                    shakeElement(loginForm);
+                    return;
+                }
+                
+                // Validar formato email
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(email)) {
+                    showStatus('❌ Email no válido', 'error');
+                    document.getElementById('loginEmail').classList.add('error');
+                    shakeElement(document.getElementById('loginEmail'));
+                    return;
+                }
+                
+                // Efecto de carga
+                const loginBtn = document.getElementById('loginBtn');
+                const originalText = loginBtn.innerHTML;
+                loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> VERIFICANDO...';
+                loginBtn.disabled = true;
+                
+                // Enviar solicitud al backend
+                fetch(`${API_BASE_URL}/api/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email, 
+                        password,
+                        rememberUser 
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Login exitoso
+                        
+                        // Guardar token de sesión
+                        localStorage.setItem('cromwell_token', data.token);
+                        localStorage.setItem('cromwell_user', JSON.stringify(data.user));
+                        
+                        // Guardar usuario recordado si está marcado
+                        if (rememberUser) {
+                            localStorage.setItem('cromwell_remembered_user', email);
+                        } else {
+                            localStorage.removeItem('cromwell_remembered_user');
+                        }
+                        
+                        showStatus('✅ Acceso concedido. Redirigiendo...', 'success');
+                        loginBtn.innerHTML = '<i class="fas fa-check"></i> ¡BIENVENIDO!';
+                        loginBtn.style.background = 'linear-gradient(135deg, #00cc7a, #00a865)';
+                        
+                        // Crear efecto de éxito
+                        createParticles('success', 20);
+                        
+                        // Redirección después de 1.5 segundos
+                        setTimeout(() => {
+                            window.location.href = 'dashboard.html';
+                        }, 1500);
+                    } else {
+                        // Login fallido
+                        showStatus(`❌ ${data.message}`, 'error');
+                        loginBtn.innerHTML = originalText;
+                        loginBtn.disabled = false;
+                        
+                        // Efecto de error
+                        createParticles('error', 15);
+                        shakeElement(loginForm);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showStatus('❌ Error de conexión con el servidor', 'error');
+                    loginBtn.innerHTML = originalText;
+                    loginBtn.disabled = false;
+                });
+            });
+            
+            // ============================================
+            // FUNCIÓN DE AUTO-LOGIN DESPUÉS DE VERIFICACIÓN
+            // ============================================
+            function performAutoLogin(email) {
+                const password = document.getElementById('registerPassword').value;
+                
+                fetch(`${API_BASE_URL}/api/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email, 
+                        password,
+                        rememberUser: false 
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Guardar token de sesión
+                        localStorage.setItem('cromwell_token', data.token);
+                        localStorage.setItem('cromwell_user', JSON.stringify(data.user));
+                        
+                        // Redirección
+                        setTimeout(() => {
+                            window.location.href = 'dashboard.html';
+                        }, 1000);
+                    } else {
+                        showStatus('❌ Error en auto-login. Intenta iniciar sesión manualmente.', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showStatus('❌ Error de conexión. Intenta iniciar sesión manualmente.', 'error');
+                });
+            }
+            
+            // ============================================
+            // TEMPORIZADOR DE REENVÍO
+            // ============================================
+            function startResendTimer() {
+                clearInterval(resendTimer);
+                countdown = 60;
+                
+                const resendLink = document.getElementById('resendLink');
+                const timerText = document.getElementById('timerText');
+                const countdownElement = document.getElementById('countdown');
+                
+                resendLink.classList.add('disabled');
+                timerText.style.display = 'inline';
+                countdownElement.textContent = countdown;
+                
+                resendTimer = setInterval(() => {
+                    countdown--;
+                    countdownElement.textContent = countdown;
+                    
+                    if (countdown <= 0) {
+                        clearInterval(resendTimer);
+                        resendLink.classList.remove('disabled');
+                        timerText.style.display = 'none';
+                    }
+                }, 1000);
+            }
+            
+            // ============================================
+            // FUNCIONES AUXILIARES
+            // ============================================
+            function showStatus(message, type = 'info') {
+                const statusElement = document.getElementById('statusMessage');
+                statusElement.textContent = message;
+                statusElement.className = 'status-message';
+                
+                if (type === 'error') {
+                    statusElement.classList.add('status-error');
+                } else if (type === 'success') {
+                    statusElement.classList.add('status-success');
+                }
+            }
+            
+            function shakeElement(element) {
+                element.style.animation = 'shake 0.5s';
+                setTimeout(() => {
+                    element.style.animation = '';
+                }, 500);
+            }
+            
+            function createParticles(type, count) {
+                const container = document.querySelector('.login-container');
+                const rect = container.getBoundingClientRect();
+                
+                for (let i = 0; i < count; i++) {
+                    const particle = document.createElement('div');
+                    particle.style.position = 'fixed';
+                    particle.style.width = '8px';
+                    particle.style.height = '8px';
+                    particle.style.borderRadius = '50%';
+                    particle.style.background = type === 'success' ? 'var(--primary)' : 'var(--accent)';
+                    particle.style.pointerEvents = 'none';
+                    particle.style.zIndex = '1000';
+                    
+                    const x = rect.left + rect.width/2 + (Math.random() - 0.5) * 100;
+                    const y = rect.top + rect.height/2 + (Math.random() - 0.5) * 50;
+                    
+                    particle.style.left = `${x}px`;
+                    particle.style.top = `${y}px`;
+                    
+                    document.body.appendChild(particle);
+                    
+                    const angle = Math.random() * Math.PI * 2;
+                    const distance = 60 + Math.random() * 60;
+                    const duration = 800 + Math.random() * 400;
+                    const startTime = Date.now();
+                    
+                    function animateParticle() {
+                        const elapsed = Date.now() - startTime;
+                        const progress = elapsed / duration;
+                        
+                        if (progress < 1) {
+                            const currentX = x + Math.cos(angle) * distance * progress;
+                            const currentY = y + Math.sin(angle) * distance * progress;
+                            const opacity = 1 - progress;
+                            
+                            particle.style.transform = `translate(${currentX - x}px, ${currentY - y}px)`;
+                            particle.style.opacity = opacity;
+                            
+                            requestAnimationFrame(animateParticle);
+                        } else {
+                            document.body.removeChild(particle);
+                        }
+                    }
+                    
+                    requestAnimationFrame(animateParticle);
+                }
+            }
+            
+            // Añadir animación de shake al CSS
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes shake {
+                    0%, 100% { transform: translateX(0); }
+                    10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+                    20%, 40%, 60%, 80% { transform: translateX(5px); }
+                }
+                .error {
+                    border-color: var(--accent) !important;
+                    animation: shake 0.5s;
+                }
+            `;
+            document.head.appendChild(style);
+            
+            // ============================================
+            // VALIDACIÓN EN TIEMPO REAL
+            // ============================================
+            const inputs = document.querySelectorAll('.form-input');
+            inputs.forEach(input => {
+                input.addEventListener('input', function() {
+                    this.classList.remove('error');
+                    
+                    // Validación de email
+                    if (this.type === 'email' && this.value) {
+                        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                        if (!emailRegex.test(this.value)) {
+                            this.classList.add('error');
+                        }
+                    }
+                    
+                    // Validación de contraseña (solo en registro)
+                    if (this.id === 'registerPassword' && this.value.length > 0 && this.value.length < 6) {
+                        this.classList.add('error');
+                    }
+                });
+            });
+            
+            // Cargar usuario recordado si existe
+            const rememberedUser = localStorage.getItem('cromwell_remembered_user');
+            if (rememberedUser) {
+                document.getElementById('loginEmail').value = rememberedUser;
+                document.getElementById('rememberCheckbox').classList.add('checked');
+                document.getElementById('rememberCheckbox').querySelector('i').style.display = 'block';
+            }
+            
+            // ============================================
+            // PREVENIR CIERRE DE SESIÓN ACCIDENTAL
+            // ============================================
+            window.addEventListener('beforeunload', function(e) {
+                const loginEmail = document.getElementById('loginEmail').value;
+                const registerEmail = document.getElementById('registerEmail').value;
+                
+                if (loginEmail || registerEmail) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
