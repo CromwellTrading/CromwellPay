@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const { createClient } = require('@supabase/supabase-js');
+const path = require('path');
 
 require('dotenv').config();
 
@@ -29,9 +30,10 @@ if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
+console.log('✅ Supabase inicializado');
 
 // ============================================
-// CONFIGURACIÓN EMAIL (GMAIL REAL)
+// CONFIGURACIÓN EMAIL
 // ============================================
 let transporter = null;
 if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
@@ -42,14 +44,23 @@ if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
             pass: process.env.EMAIL_PASS
         }
     });
+    console.log('✅ Email configurado');
+} else {
+    console.log('⚠️  Email no configurado - usando consola');
 }
 
 // ============================================
 // MIDDLEWARE
 // ============================================
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors());
 app.use(bodyParser.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Logs
+app.use((req, res, next) => {
+    console.log(`${req.method} ${req.url}`);
+    next();
+});
 
 // ============================================
 // FUNCIONES
@@ -73,7 +84,13 @@ async function sendVerificationEmail(email, code) {
             from: `"Cromwell Pay" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: 'Código de Verificación - Cromwell Pay',
-            html: `<p>Tu código: <b>${code}</b></p>`
+            html: `
+                <div style="font-family: Arial, sans-serif;">
+                    <h2 style="color: #00ff9d;">¡Bienvenido a Cromwell Pay!</h2>
+                    <p>Tu código de verificación es: <strong style="font-size: 24px;">${code}</strong></p>
+                    <p>Expira en 15 minutos.</p>
+                </div>
+            `
         });
         console.log(`✅ Email enviado a ${email}`);
         return true;
@@ -85,13 +102,13 @@ async function sendVerificationEmail(email, code) {
 }
 
 // ============================================
-// VERIFICAR/CREAR ADMIN AL INICIAR
+// CREAR ADMIN AL INICIAR
 // ============================================
-async function ensureAdminExists() {
+async function createAdminIfNotExists() {
     try {
         const adminEmail = 'cromwellpayclient@gmail.com';
         
-        // Verificar si admin existe
+        // Verificar si existe
         const { data: admin } = await supabase
             .from('users')
             .select('*')
@@ -99,15 +116,15 @@ async function ensureAdminExists() {
             .single();
             
         if (admin) {
-            console.log('✅ Admin encontrado:', adminEmail);
+            console.log('✅ Admin ya existe:', adminEmail);
             return;
         }
         
-        // Si no existe, crear admin
+        // Crear admin
         console.log('👤 Creando admin...');
         const hashedPassword = await bcrypt.hash('V3ry$tr0ngP@$$w0rd_2024@Admin', 10);
         
-        await supabase.from('users').insert([{
+        const { error } = await supabase.from('users').insert([{
             user_id: 'CROM-0001',
             email: adminEmail,
             password_hash: hashedPassword,
@@ -119,23 +136,38 @@ async function ensureAdminExists() {
             phone: 'N/A',
             province: 'Admin',
             accepted_terms: true
-            // Nota: No incluir created_at si no existe en la tabla
         }]);
+        
+        if (error) {
+            console.error('❌ Error creando admin:', error.message);
+            return;
+        }
         
         console.log('✅ Admin creado');
         console.log('📧 Email:', adminEmail);
         console.log('🔑 Contraseña: V3ry$tr0ngP@$$w0rd_2024@Admin');
         
     } catch (error) {
-        console.error('⚠️  No se pudo verificar/crear admin:', error.message);
+        console.error('⚠️  Error creando admin:', error.message);
     }
 }
 
 // ============================================
-// ENDPOINTS
+// RUTAS WEB
+// ============================================
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/login.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// ============================================
+// API ENDPOINTS
 // ============================================
 
-// 1. REGISTRO (SIN created_at)
+// 1. REGISTRO
 app.post('/api/register', async (req, res) => {
     console.log('📝 Registro:', req.body.email);
     
@@ -146,7 +178,7 @@ app.post('/api/register', async (req, res) => {
             return res.json({ success: false, message: 'Completa todos los campos' });
         }
 
-        // Verificar si usuario existe
+        // Verificar si existe
         const { data: existingUser } = await supabase
             .from('users')
             .select('email')
@@ -157,7 +189,7 @@ app.post('/api/register', async (req, res) => {
             return res.json({ success: false, message: 'Email ya registrado' });
         }
 
-        // Crear usuario SIN created_at
+        // Crear usuario
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = {
             user_id: generateUserId(),
@@ -170,24 +202,24 @@ app.post('/api/register', async (req, res) => {
             accepted_terms: true
         };
 
-        const { error: createError } = await supabase
+        const { error } = await supabase
             .from('users')
             .insert([newUser]);
 
-        if (createError) {
-            console.error('❌ Error al crear usuario:', createError);
+        if (error) {
+            console.error('❌ Error creando usuario:', error);
             
-            if (createError.code === '42501') {
+            if (error.code === '42501') {
                 return res.json({ 
                     success: false, 
-                    message: 'Error de permisos. Ejecuta: ALTER TABLE users DISABLE ROW LEVEL SECURITY; en Supabase' 
+                    message: 'Error de permisos. Ejecuta en Supabase: ALTER TABLE users DISABLE ROW LEVEL SECURITY;' 
                 });
             }
             
             return res.json({ success: false, message: 'Error al crear usuario' });
         }
 
-        // Generar código de verificación
+        // Generar código
         const verificationCode = generateVerificationCode();
         
         await supabase.from('verification_codes').insert([{
@@ -205,7 +237,7 @@ app.post('/api/register', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error en registro:', error);
+        console.error('❌ Error registro:', error);
         res.json({ success: false, message: 'Error interno' });
     }
 });
@@ -238,12 +270,12 @@ app.post('/api/login', async (req, res) => {
             return res.json({ success: false, message: 'Credenciales incorrectas' });
         }
 
-        // Verificar si está verificado
+        // Verificar email
         if (!user.verified) {
             return res.json({ success: false, message: 'Verifica tu email primero' });
         }
 
-        // Generar token
+        // Token
         const token = jwt.sign(
             { 
                 id: user.id, 
@@ -265,7 +297,7 @@ app.post('/api/login', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error en login:', error);
+        console.error('❌ Error login:', error);
         res.json({ success: false, message: 'Error interno' });
     }
 });
@@ -308,7 +340,7 @@ app.post('/api/verify', async (req, res) => {
         // Eliminar código
         await supabase.from('verification_codes').delete().eq('id', verification.id);
 
-        // Buscar usuario para token
+        // Buscar usuario
         const { data: user } = await supabase
             .from('users')
             .select('*')
@@ -336,7 +368,7 @@ app.post('/api/verify', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error en verificación:', error);
+        console.error('❌ Error verificación:', error);
         res.json({ success: false, message: 'Error interno' });
     }
 });
@@ -359,20 +391,20 @@ app.post('/api/resend-code', async (req, res) => {
         // Generar nuevo código
         const verificationCode = generateVerificationCode();
         
-        // Guardar código
+        // Guardar
         await supabase.from('verification_codes').insert([{
             email: email.toLowerCase(),
             code: verificationCode,
             expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString()
         }]);
 
-        // Enviar email
+        // Enviar
         await sendVerificationEmail(email, verificationCode);
 
         res.json({ success: true, message: 'Código reenviado' });
 
     } catch (error) {
-        console.error('❌ Error al reenviar:', error);
+        console.error('❌ Error reenviar:', error);
         res.json({ success: false, message: 'Error interno' });
     }
 });
@@ -399,15 +431,26 @@ app.post('/api/verify-token', (req, res) => {
 });
 
 // ============================================
+// MANEJO DE ERRORES
+// ============================================
+app.use((err, req, res, next) => {
+    console.error('🔥 ERROR:', err);
+    res.status(500).json({ success: false, message: 'Error interno' });
+});
+
+// ============================================
 // INICIAR SERVIDOR
 // ============================================
 app.listen(PORT, async () => {
-    console.log('🚀 Servidor iniciado en puerto', PORT);
-    console.log('🌐 URL:', `https://cromwellpay.onrender.com`);
+    console.log('========================================');
+    console.log(`🚀 SERVIDOR INICIADO EN PUERTO ${PORT}`);
+    console.log('========================================');
     
-    // Verificar/crear admin al iniciar
-    await ensureAdminExists();
+    // Crear admin si no existe
+    await createAdminIfNotExists();
     
     console.log('✅ Sistema listo');
     console.log('🔑 Admin: cromwellpayclient@gmail.com');
+    console.log('🔑 Contraseña: V3ry$tr0ngP@$$w0rd_2024@Admin');
+    console.log('========================================');
 });
