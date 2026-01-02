@@ -1,0 +1,38 @@
+require('dotenv').config();
+
+module.exports = {
+    // Supabase
+    supabase: {
+        url: process.env.SUPABASE_URL,
+        key: process.env.SUPABASE_SERVICE_KEY
+    },
+    
+    // JWT
+    jwt: {
+        secret: process.env.JWT_SECRET || 'cromwell_pay_secret_key_production_2024',
+        expiresIn: '7d'
+    },
+    
+    // Email
+    email: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    },
+    
+    // Admin
+    admin: {
+        email: process.env.ADMIN_EMAIL,
+        password: process.env.ADMIN_PASSWORD
+    },
+    
+    // Server
+    server: {
+        port: process.env.PORT || 3000
+    },
+    
+    // CWT/CWS Rates
+    rates: {
+        usdtToCwt: 0.1, // 5 USDT = 0.1 CWT
+        saldoToCws: 10   // 100 saldo = 10 CWS
+    }
+};
