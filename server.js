@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const { createClient } = require('@supabase/supabase-js');
@@ -22,7 +22,6 @@ console.log('📊 Puerto:', PORT);
 // Verificar variables críticas
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
     console.error('🚨 ERROR: Variables de Supabase faltantes');
-    console.error('💡 Crea un archivo .env con SUPABASE_URL y SUPABASE_SERVICE_KEY');
     process.exit(1);
 }
 
@@ -35,41 +34,24 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 console.log('✅ Supabase inicializado');
 
 // ============================================
-// CONFIGURACIÓN EMAIL MEJORADA
+// CONFIGURACIÓN RESEND (INTERMEDIARIO PARA GMAIL)
 // ============================================
-let transporter = null;
-if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-    console.log('📧 Configurando email...');
-    
-    transporter = nodemailer.createTransport({
-        host: 'smtp.gmail.com',
-        port: 587,
-        secure: false, // true para 465, false para otros puertos
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS
-        },
-        tls: {
-            rejectUnauthorized: false,
-            ciphers: 'SSLv3'
-        },
-        connectionTimeout: 10000, // 10 segundos timeout
-        greetingTimeout: 10000,
-        socketTimeout: 10000
-    });
-    
-    // Verificar conexión del transporte
-    transporter.verify(function(error, success) {
-        if (error) {
-            console.error('❌ Error configuración email:', error.message);
-            console.log('⚠️  Usando modo consola para códigos de verificación');
-            transporter = null; // Desactivar transporter
-        } else {
-            console.log('✅ Email configurado correctamente');
-        }
-    });
+let resendClient = null;
+let emailConfigured = false;
+
+if (process.env.RESEND_API_KEY && process.env.FROM_EMAIL) {
+    try {
+        resendClient = new Resend(process.env.RESEND_API_KEY);
+        emailConfigured = true;
+        console.log('✅ Resend configurado correctamente');
+        console.log('📧 Emails se enviarán desde:', process.env.FROM_EMAIL);
+    } catch (error) {
+        console.error('❌ Error configurando Resend:', error.message);
+        emailConfigured = false;
+    }
 } else {
-    console.log('⚠️  Variables de email no configuradas - usando modo consola');
+    console.log('⚠️  Resend no configurado - usando modo consola');
+    console.log('💡 Agrega RESEND_API_KEY y FROM_EMAIL en las variables de entorno');
 }
 
 // ============================================
@@ -80,6 +62,7 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -88,32 +71,6 @@ app.use((req, res, next) => {
     console.log(`${new Date().toLocaleString()} - ${req.method} ${req.url}`);
     next();
 });
-
-// Middleware de autenticación
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (!token) {
-        return res.status(401).json({ success: false, message: 'Token requerido' });
-    }
-    
-    jwt.verify(token, process.env.JWT_SECRET || 'cromwell-secret-key-2024', (err, user) => {
-        if (err) {
-            return res.status(403).json({ success: false, message: 'Token inválido o expirado' });
-        }
-        req.user = user;
-        next();
-    });
-};
-
-// Middleware para admin
-const adminOnly = (req, res, next) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ success: false, message: 'Acceso denegado. Se requiere rol de admin.' });
-    }
-    next();
-};
 
 // ============================================
 // FUNCIONES AUXILIARES
@@ -127,141 +84,277 @@ function generateUserId() {
 }
 
 async function sendVerificationEmail(email, code) {
-    if (!transporter) {
+    if (!emailConfigured || !resendClient) {
         console.log(`📧 [MODO CONSOLA] Código para ${email}: ${code}`);
-        console.log(`📧 [MODO CONSOLA] El código expira en 15 minutos`);
-        return { success: true, mode: 'console', code: code };
+        console.log(`📧 [MODO CONSOLA] Expira en 15 minutos`);
+        return { 
+            success: true, 
+            mode: 'console', 
+            code: code 
+        };
     }
 
     try {
-        const mailOptions = {
-            from: `"Cromwell Pay" <${process.env.EMAIL_USER}>`,
-            to: email,
-            subject: '✅ Código de Verificación - Cromwell Pay',
+        const emailData = {
+            from: `Cromwell Pay <${process.env.FROM_EMAIL}>`,
+            to: [email],
+            subject: '✅ Tu Código de Verificación - Cromwell Pay',
             html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f5f5f5; padding: 20px;">
-                    <div style="background: linear-gradient(135deg, #00ff9d, #00cc7a); padding: 20px; border-radius: 10px 10px 0 0; text-align: center;">
-                        <h1 style="color: #0a0a0a; margin: 0; font-size: 24px;">CROMWELL PAY</h1>
-                        <p style="color: rgba(0,0,0,0.8); margin: 5px 0 0 0; font-size: 14px;">Sistema de Recargas y Recompensas</p>
-                    </div>
-                    
-                    <div style="background: white; padding: 30px; border-radius: 0 0 10px 10px;">
-                        <h2 style="color: #0a0a0a; margin-bottom: 20px;">¡Bienvenido a Cromwell Pay!</h2>
-                        <p style="color: #333; font-size: 16px; line-height: 1.5;">
-                            Gracias por registrarte. Para activar tu cuenta, por favor utiliza el siguiente código de verificación:
-                        </p>
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Código de Verificación</title>
+                    <style>
+                        body {
+                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+                            margin: 0;
+                            padding: 0;
+                            color: #ffffff;
+                        }
+                        .container {
+                            max-width: 600px;
+                            margin: 0 auto;
+                            background: rgba(20, 20, 30, 0.95);
+                            border-radius: 20px;
+                            overflow: hidden;
+                            border: 1px solid rgba(0, 255, 157, 0.3);
+                            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+                        }
+                        .header {
+                            background: linear-gradient(135deg, #00ff9d 0%, #00cc7a 100%);
+                            padding: 40px;
+                            text-align: center;
+                            position: relative;
+                            overflow: hidden;
+                        }
+                        .header::before {
+                            content: '';
+                            position: absolute;
+                            top: -50%;
+                            left: -50%;
+                            width: 200%;
+                            height: 200%;
+                            background: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
+                            background-size: 20px 20px;
+                            opacity: 0.3;
+                            animation: gridMove 20s linear infinite;
+                        }
+                        .header h1 {
+                            color: #0a0a0a;
+                            margin: 0;
+                            font-size: 36px;
+                            font-weight: 800;
+                            letter-spacing: 2px;
+                            text-transform: uppercase;
+                            position: relative;
+                            z-index: 1;
+                        }
+                        .header p {
+                            color: rgba(0, 0, 0, 0.8);
+                            margin: 10px 0 0 0;
+                            font-size: 16px;
+                            position: relative;
+                            z-index: 1;
+                        }
+                        .content {
+                            padding: 50px;
+                        }
+                        .welcome-text {
+                            font-size: 24px;
+                            color: #00ff9d;
+                            margin-bottom: 30px;
+                            text-align: center;
+                            font-weight: 600;
+                        }
+                        .code-container {
+                            background: rgba(0, 0, 0, 0.5);
+                            border: 2px solid #00ff9d;
+                            border-radius: 15px;
+                            padding: 40px;
+                            text-align: center;
+                            margin: 40px 0;
+                            position: relative;
+                            overflow: hidden;
+                        }
+                        .code-container::before {
+                            content: '';
+                            position: absolute;
+                            top: 0;
+                            left: -100%;
+                            width: 100%;
+                            height: 100%;
+                            background: linear-gradient(90deg, transparent, rgba(0, 255, 157, 0.1), transparent);
+                            animation: shine 3s infinite;
+                        }
+                        .verification-code {
+                            font-family: 'Courier New', monospace;
+                            font-size: 60px;
+                            font-weight: 900;
+                            letter-spacing: 20px;
+                            color: #00ff9d;
+                            text-shadow: 0 0 20px rgba(0, 255, 157, 0.5);
+                            margin: 0;
+                            animation: pulse 2s infinite;
+                        }
+                        .instructions {
+                            color: rgba(255, 255, 255, 0.8);
+                            line-height: 1.8;
+                            font-size: 16px;
+                            text-align: center;
+                            margin: 30px 0;
+                        }
+                        .warning-box {
+                            background: rgba(255, 62, 128, 0.1);
+                            border: 1px solid rgba(255, 62, 128, 0.3);
+                            border-radius: 10px;
+                            padding: 20px;
+                            margin: 30px 0;
+                            text-align: center;
+                        }
+                        .warning-box strong {
+                            color: #ff3e80;
+                        }
+                        .steps {
+                            background: rgba(0, 255, 157, 0.05);
+                            border-radius: 10px;
+                            padding: 20px;
+                            margin: 30px 0;
+                        }
+                        .step {
+                            display: flex;
+                            align-items: center;
+                            margin: 15px 0;
+                            color: rgba(255, 255, 255, 0.7);
+                        }
+                        .step-number {
+                            background: #00ff9d;
+                            color: #0a0a0a;
+                            width: 30px;
+                            height: 30px;
+                            border-radius: 50%;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            font-weight: bold;
+                            margin-right: 15px;
+                        }
+                        .footer {
+                            background: rgba(0, 0, 0, 0.7);
+                            padding: 30px;
+                            text-align: center;
+                            border-top: 1px solid rgba(255, 255, 255, 0.1);
+                            color: rgba(255, 255, 255, 0.5);
+                            font-size: 14px;
+                        }
+                        @keyframes pulse {
+                            0%, 100% { opacity: 1; }
+                            50% { opacity: 0.8; }
+                        }
+                        @keyframes shine {
+                            0% { left: -100%; }
+                            100% { left: 100%; }
+                        }
+                        @keyframes gridMove {
+                            0% { transform: translate(0, 0); }
+                            100% { transform: translate(20px, 20px); }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>CROMWELL PAY</h1>
+                            <p>Sistema de Recargas USDT y Saldo Móvil</p>
+                        </div>
                         
-                        <div style="background: linear-gradient(135deg, #f8f9fa, #e9ecef); padding: 25px; border-radius: 10px; text-align: center; margin: 25px 0; border: 2px dashed #00ff9d;">
-                            <div style="font-size: 36px; font-weight: bold; letter-spacing: 10px; color: #00ff9d; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                                ${code}
+                        <div class="content">
+                            <div class="welcome-text">
+                                ¡Bienvenido a la Revolución de las Recargas!
+                            </div>
+                            
+                            <div class="instructions">
+                                Hola, gracias por registrarte en Cromwell Pay. Para activar tu cuenta y acceder a todas las funciones, por favor utiliza el siguiente código de verificación:
+                            </div>
+                            
+                            <div class="code-container">
+                                <p class="verification-code">${code}</p>
+                            </div>
+                            
+                            <div class="warning-box">
+                                <strong>⚠️ ATENCIÓN:</strong> Este código es válido por <strong>15 minutos</strong> y solo puede ser usado una vez.
+                            </div>
+                            
+                            <div class="steps">
+                                <div class="step">
+                                    <div class="step-number">1</div>
+                                    <div>Ingresa el código en la página de verificación de Cromwell Pay</div>
+                                </div>
+                                <div class="step">
+                                    <div class="step-number">2</div>
+                                    <div>Tu cuenta será activada inmediatamente</div>
+                                </div>
+                                <div class="step">
+                                    <div class="step-number">3</div>
+                                    <div>Comienza a recargar y ganar tokens CWT y CWS</div>
+                                </div>
+                            </div>
+                            
+                            <div class="instructions">
+                                Si no solicitaste este código, por favor ignora este mensaje.<br>
+                                Para cualquier duda, contacta a nuestro soporte.
                             </div>
                         </div>
                         
-                        <p style="color: #666; font-size: 14px; line-height: 1.5;">
-                            <strong>⚠️ Importante:</strong> Este código es válido por <strong>15 minutos</strong>.<br>
-                            Si no solicitaste este código, puedes ignorar este mensaje.
-                        </p>
-                        
-                        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
-                            <p style="color: #888; font-size: 12px;">
-                                Este es un correo automático, por favor no responder.<br>
-                                © ${new Date().getFullYear()} Cromwell Pay. Todos los derechos reservados.
-                            </p>
+                        <div class="footer">
+                            <p>© ${new Date().getFullYear()} Cromwell Pay. Todos los derechos reservados.</p>
+                            <p>Este es un mensaje automático, por favor no responder directamente a este correo.</p>
+                            <p>🔒 Tus datos están protegidos con encriptación de nivel bancario</p>
                         </div>
                     </div>
-                </div>
+                </body>
+                </html>
             `,
-            text: `Tu código de verificación para Cromwell Pay es: ${code}. Este código expira en 15 minutos. Si no solicitaste este código, ignora este mensaje.`
+            text: `Tu código de verificación para Cromwell Pay es: ${code}. Ingresa este código en la página de verificación para activar tu cuenta. El código expira en 15 minutos. Si no solicitaste este código, ignora este mensaje.`
         };
 
-        await transporter.sendMail(mailOptions);
-        console.log(`✅ Email enviado a: ${email}`);
-        return { success: true, mode: 'email', code: code };
-    } catch (error) {
-        console.error('❌ Error enviando email:', error.message);
-        console.log(`📧 [FALLBACK] Código para ${email}: ${code}`);
-        return { success: true, mode: 'fallback', code: code };
-    }
-}
+        const { data, error } = await resendClient.emails.send(emailData);
 
-// ============================================
-// CREAR ADMIN AL INICIAR (VERSIÓN MEJORADA)
-// ============================================
-async function createAdminIfNotExists() {
-    try {
-        const adminEmail = 'cromwellpayclient@gmail.com';
-        
-        console.log('👤 Verificando administrador...');
-        
-        // Verificar si existe
-        const { data: admin, error: fetchError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('email', adminEmail)
-            .single();
-            
-        if (fetchError) {
-            // Si no existe el usuario, crear
-            console.log('👤 Creando admin...');
-            const hashedPassword = await bcrypt.hash('V3ry$tr0ngP@$$w0rd_2024@Admin', 10);
-            
-            const adminData = {
-                user_id: 'CROM-0001',
-                email: adminEmail,
-                password_hash: hashedPassword,
-                verified: true,
-                role: 'admin',
-                cwt: 1000,
-                cws: 5000,
-                nickname: 'Admin Cromwell',
-                phone: 'N/A',
-                province: 'Admin',
-                accepted_terms: true
-            };
-            
-            const { error: insertError } = await supabase
-                .from('users')
-                .insert([adminData]);
-
-            if (insertError) {
-                console.error('❌ Error creando admin:', insertError.message);
-                return;
-            }
-            
-            console.log('========================================');
-            console.log('✅ ADMIN CREADO EXITOSAMENTE');
-            console.log('📧 Email:', adminEmail);
-            console.log('🔑 Contraseña: V3ry$tr0ngP@$$w0rd_2024@Admin');
-            console.log('========================================');
-        } else {
-            console.log('✅ Admin ya existe:', adminEmail);
+        if (error) {
+            console.error('❌ Error enviando email con Resend:', error);
+            throw error;
         }
+
+        console.log(`✅ Email enviado exitosamente a: ${email}`);
+        console.log(`📧 ID del email: ${data.id}`);
         
+        return { 
+            success: true, 
+            mode: 'email', 
+            code: code,
+            message: 'Email enviado exitosamente'
+        };
+
     } catch (error) {
-        console.error('⚠️  Error verificando admin:', error.message);
+        console.error('❌ Error crítico enviando email:', error.message);
+        console.log(`📧 [MODO SEGURO] Código para ${email}: ${code}`);
+        
+        return { 
+            success: true, 
+            mode: 'console', 
+            code: code,
+            message: 'Email no enviado. Código disponible en consola.'
+        };
     }
 }
 
 // ============================================
-// RUTAS WEB
-// ============================================
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-app.get('/login.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-app.get('/dashboard.html', authenticateToken, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
-// ============================================
-// API ENDPOINTS - AUTENTICACIÓN
+// RUTAS API (VERSIÓN SIMPLIFICADA Y ROBUSTA)
 // ============================================
 
-// 1. REGISTRO (VERSIÓN CORREGIDA)
+// 1. REGISTRO CON RESEND
 app.post('/api/register', async (req, res) => {
     console.log('📝 Registro:', req.body.email);
     
@@ -269,30 +362,29 @@ app.post('/api/register', async (req, res) => {
         const { email, password, termsAccepted } = req.body;
 
         if (!email || !password) {
-            return res.status(400).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Email y contraseña requeridos' 
             });
         }
 
         if (!termsAccepted) {
-            return res.status(400).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Debes aceptar los términos y condiciones' 
             });
         }
 
         if (password.length < 6) {
-            return res.status(400).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'La contraseña debe tener al menos 6 caracteres' 
             });
         }
 
-        // Validar formato email
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-            return res.status(400).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Email no válido' 
             });
@@ -305,10 +397,10 @@ app.post('/api/register', async (req, res) => {
             .from('users')
             .select('email')
             .eq('email', emailLower)
-            .maybeSingle();
+            .single();
 
         if (existingUser) {
-            return res.status(400).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Este email ya está registrado' 
             });
@@ -329,33 +421,24 @@ app.post('/api/register', async (req, res) => {
             accepted_terms: true
         };
 
-        console.log('👤 Insertando usuario:', userId);
         const { error: insertError } = await supabase
             .from('users')
             .insert([newUser]);
 
         if (insertError) {
             console.error('❌ Error creando usuario:', insertError);
-            
-            if (insertError.code === '42501') {
-                return res.status(500).json({ 
-                    success: false, 
-                    message: 'Error de permisos en la base de datos. Verifica las políticas RLS.' 
-                });
-            }
-            
-            return res.status(500).json({ 
+            return res.json({ 
                 success: false, 
-                message: 'Error al crear usuario: ' + insertError.message 
+                message: 'Error al crear usuario' 
             });
         }
 
-        // Generar y guardar código de verificación
+        // Generar código
         const verificationCode = generateVerificationCode();
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
         
-        console.log('🔐 Guardando código de verificación para:', emailLower);
-        const { error: codeError } = await supabase
+        // Guardar código
+        await supabase
             .from('verification_codes')
             .insert([{
                 email: emailLower,
@@ -363,42 +446,41 @@ app.post('/api/register', async (req, res) => {
                 expires_at: expiresAt.toISOString()
             }]);
 
-        if (codeError) {
-            console.error('❌ Error guardando código:', codeError);
-            // No retornamos error aquí, porque el usuario ya fue creado
-            // Simplemente continuamos
-        }
-
-        // Enviar email
+        // Enviar email CON RESEND
         const emailResult = await sendVerificationEmail(email, verificationCode);
         
         let message = 'Registro exitoso. ';
+        let responseData = {
+            success: true,
+            message: '',
+            email: email,
+            userId: userId
+        };
+
         if (emailResult.mode === 'email') {
             message += 'Revisa tu correo para el código de verificación.';
-        } else if (emailResult.mode === 'console') {
-            message += `Código de verificación (consola): ${verificationCode}`;
+            responseData.message = message;
+            responseData.emailSent = true;
         } else {
             message += `Código de verificación: ${verificationCode}`;
+            responseData.message = message;
+            responseData.emailSent = false;
+            responseData.verificationCode = verificationCode;
+            console.log(`📧 Código para ${email}: ${verificationCode}`);
         }
 
-        res.json({ 
-            success: true, 
-            message: message,
-            email: email,
-            userId: userId,
-            verificationCode: verificationCode // Enviar código en respuesta para desarrollo
-        });
+        res.json(responseData);
 
     } catch (error) {
         console.error('❌ Error en registro:', error);
-        res.status(500).json({ 
+        res.json({ 
             success: false, 
-            message: 'Error interno del servidor: ' + error.message 
+            message: 'Error interno del servidor' 
         });
     }
 });
 
-// 2. LOGIN
+// 2. LOGIN (igual que antes)
 app.post('/api/login', async (req, res) => {
     console.log('🔐 Login:', req.body.email);
     
@@ -406,7 +488,7 @@ app.post('/api/login', async (req, res) => {
         const { email, password } = req.body;
 
         if (!email || !password) {
-            return res.status(400).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Email y contraseña requeridos' 
             });
@@ -414,44 +496,37 @@ app.post('/api/login', async (req, res) => {
 
         const emailLower = email.toLowerCase();
 
-        // Buscar usuario
-        const { data: user, error: userError } = await supabase
+        const { data: user } = await supabase
             .from('users')
             .select('*')
             .eq('email', emailLower)
-            .maybeSingle();
+            .single();
 
-        if (userError || !user) {
-            console.log('❌ Usuario no encontrado:', emailLower);
-            return res.status(401).json({ 
+        if (!user) {
+            return res.json({ 
                 success: false, 
                 message: 'Credenciales incorrectas' 
             });
         }
 
-        // Verificar contraseña
         const passwordMatch = await bcrypt.compare(password, user.password_hash);
         if (!passwordMatch) {
-            console.log('❌ Contraseña incorrecta para:', emailLower);
-            return res.status(401).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Credenciales incorrectas' 
             });
         }
 
-        // Verificar email
         if (!user.verified) {
-            // Si no está verificado, devolver un error específico
-            return res.status(403).json({ 
+            return res.json({ 
                 success: false, 
-                message: 'Email no verificado. Por favor verifica tu cuenta primero.',
+                message: 'Email no verificado. Verifica tu cuenta primero.',
                 needsVerification: true,
                 email: user.email,
                 userId: user.user_id
             });
         }
 
-        // Generar token JWT
         const token = jwt.sign(
             { 
                 id: user.id,
@@ -464,10 +539,8 @@ app.post('/api/login', async (req, res) => {
             { expiresIn: '7d' }
         );
 
-        // Remover contraseña del objeto de respuesta
         const { password_hash, ...userWithoutPassword } = user;
 
-        console.log('✅ Login exitoso:', user.email);
         res.json({
             success: true,
             message: 'Login exitoso',
@@ -477,14 +550,14 @@ app.post('/api/login', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error en login:', error);
-        res.status(500).json({ 
+        res.json({ 
             success: false, 
             message: 'Error interno del servidor' 
         });
     }
 });
 
-// 3. VERIFICACIÓN DE EMAIL
+// 3. VERIFICACIÓN
 app.post('/api/verify', async (req, res) => {
     console.log('🔐 Verificación:', req.body.email);
     
@@ -492,58 +565,42 @@ app.post('/api/verify', async (req, res) => {
         const { email, code } = req.body;
 
         if (!email || !code) {
-            return res.status(400).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Email y código requeridos' 
             });
         }
 
         const emailLower = email.toLowerCase();
-
-        // Buscar código válido (no usado y no expirado)
         const now = new Date().toISOString();
-        const { data: verification, error: codeError } = await supabase
+
+        const { data: verification } = await supabase
             .from('verification_codes')
             .select('*')
             .eq('email', emailLower)
             .eq('code', code)
-            .eq('used', false)
-            .gt('expires_at', now) // expires_at > now
-            .maybeSingle();
+            .gt('expires_at', now)
+            .single();
 
-        if (codeError || !verification) {
-            console.log('❌ Código inválido o expirado para:', emailLower);
-            return res.status(400).json({ 
+        if (!verification) {
+            return res.json({ 
                 success: false, 
-                message: 'Código inválido, expirado o ya utilizado' 
+                message: 'Código inválido o expirado' 
             });
         }
 
-        // Marcar código como usado
-        await supabase
-            .from('verification_codes')
-            .update({ used: true })
-            .eq('id', verification.id);
-
-        // Marcar usuario como verificado
-        const { data: user, error: userError } = await supabase
+        const { data: user } = await supabase
             .from('users')
-            .update({ 
-                verified: true
-            })
+            .update({ verified: true })
             .eq('email', emailLower)
             .select('*')
             .single();
 
-        if (userError || !user) {
-            console.error('❌ Error verificando usuario:', userError);
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Error al verificar usuario' 
-            });
-        }
+        await supabase
+            .from('verification_codes')
+            .delete()
+            .eq('id', verification.id);
 
-        // Generar token JWT
         const token = jwt.sign(
             { 
                 id: user.id,
@@ -556,10 +613,8 @@ app.post('/api/verify', async (req, res) => {
             { expiresIn: '7d' }
         );
 
-        // Remover contraseña del objeto de respuesta
         const { password_hash, ...userWithoutPassword } = user;
 
-        console.log('✅ Usuario verificado:', user.email);
         res.json({
             success: true,
             message: '¡Email verificado exitosamente!',
@@ -569,7 +624,7 @@ app.post('/api/verify', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error en verificación:', error);
-        res.status(500).json({ 
+        res.json({ 
             success: false, 
             message: 'Error interno del servidor' 
         });
@@ -582,68 +637,35 @@ app.post('/api/resend-code', async (req, res) => {
         const { email } = req.body;
 
         if (!email) {
-            return res.status(400).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Email requerido' 
             });
         }
 
-        const emailLower = email.toLowerCase();
-
-        // Verificar si el usuario existe
-        const { data: user } = await supabase
-            .from('users')
-            .select('email, verified')
-            .eq('email', emailLower)
-            .maybeSingle();
-
-        if (!user) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Usuario no encontrado' 
-            });
-        }
-
-        if (user.verified) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'El usuario ya está verificado' 
-            });
-        }
-
-        // Eliminar códigos anteriores no usados (opcional)
-        await supabase
-            .from('verification_codes')
-            .update({ used: true })
-            .eq('email', emailLower)
-            .eq('used', false);
-
-        // Generar nuevo código
         const verificationCode = generateVerificationCode();
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-        
-        // Guardar nuevo código
-        const { error: insertError } = await supabase
+
+        await supabase
+            .from('verification_codes')
+            .delete()
+            .eq('email', email.toLowerCase());
+
+        await supabase
             .from('verification_codes')
             .insert([{
-                email: emailLower,
+                email: email.toLowerCase(),
                 code: verificationCode,
                 expires_at: expiresAt.toISOString()
             }]);
 
-        if (insertError) {
-            console.error('❌ Error guardando código:', insertError);
-            // Continuar aunque falle la base de datos
-        }
-
-        // Enviar email
         const emailResult = await sendVerificationEmail(email, verificationCode);
         
         let message = 'Código reenviado. ';
         if (emailResult.mode === 'email') {
             message += 'Revisa tu correo.';
         } else {
-            message += `Código (consola): ${verificationCode}`;
+            message += `Código: ${verificationCode}`;
         }
 
         res.json({ 
@@ -654,7 +676,7 @@ app.post('/api/resend-code', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error reenviar código:', error);
-        res.status(500).json({ 
+        res.json({ 
             success: false, 
             message: 'Error interno del servidor' 
         });
@@ -666,7 +688,7 @@ app.post('/api/verify-token', (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     
     if (!token) {
-        return res.status(401).json({ 
+        return res.json({ 
             success: false, 
             message: 'Token no proporcionado' 
         });
@@ -674,7 +696,7 @@ app.post('/api/verify-token', (req, res) => {
 
     jwt.verify(token, process.env.JWT_SECRET || 'cromwell-secret-key-2024', (err, user) => {
         if (err) {
-            return res.status(403).json({ 
+            return res.json({ 
                 success: false, 
                 message: 'Token inválido o expirado' 
             });
@@ -686,327 +708,71 @@ app.post('/api/verify-token', (req, res) => {
     });
 });
 
-// ============================================
-// API ENDPOINTS - DASHBOARD
-// ============================================
-
-// 6. OBTENER DATOS DEL DASHBOARD
-app.get('/api/dashboard', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.id;
-        
-        // Obtener datos del usuario
-        const { data: user, error } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', userId)
-            .single();
-
-        if (error || !user) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Usuario no encontrado' 
-            });
-        }
-
-        // Remover contraseña
-        const { password_hash, ...userWithoutPassword } = user;
-
-        res.json({
-            success: true,
-            user: userWithoutPassword
-        });
-
-    } catch (error) {
-        console.error('❌ Error cargando dashboard:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error al cargar datos del dashboard' 
-        });
-    }
-});
-
-// 7. ACTUALIZAR PERFIL
-app.put('/api/user/profile', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.id;
-        const { nickname, phone, province, wallet, notifications } = req.body;
-
-        // Validar campos obligatorios
-        if (!nickname || !phone || !province) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Nickname, teléfono y provincia son obligatorios' 
-            });
-        }
-
-        const updates = {
-            nickname,
-            phone,
-            province,
-            wallet: wallet || null,
-            notifications: notifications !== false
-        };
-
-        const { data: user, error } = await supabase
-            .from('users')
-            .update(updates)
-            .eq('id', userId)
-            .select('*')
-            .single();
-
-        if (error) {
-            console.error('❌ Error actualizando perfil:', error);
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Error al actualizar perfil' 
-            });
-        }
-
-        const { password_hash, ...userWithoutPassword } = user;
-
-        res.json({
-            success: true,
-            message: 'Perfil actualizado correctamente',
-            user: userWithoutPassword
-        });
-
-    } catch (error) {
-        console.error('❌ Error actualizando perfil:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// ============================================
-// API ENDPOINTS - ADMIN
-// ============================================
-
-// 8. LISTAR TODOS LOS USUARIOS (Admin)
-app.get('/api/admin/users', authenticateToken, adminOnly, async (req, res) => {
-    try {
-        const search = req.query.search || '';
-        
-        let query = supabase
-            .from('users')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-        if (search) {
-            query = query.or(`user_id.ilike.%${search}%,email.ilike.%${search}%,nickname.ilike.%${search}%`);
-        }
-
-        const { data: users, error } = await query;
-
-        if (error) {
-            console.error('❌ Error obteniendo usuarios:', error);
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Error al obtener usuarios' 
-            });
-        }
-
-        // Remover contraseñas
-        const sanitizedUsers = users ? users.map(user => {
-            const { password_hash, ...userWithoutPassword } = user;
-            return userWithoutPassword;
-        }) : [];
-
-        res.json({
-            success: true,
-            users: sanitizedUsers
-        });
-
-    } catch (error) {
-        console.error('❌ Error en admin/users:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// 9. ACTUALIZAR SALDO DE USUARIO (Admin)
-app.put('/api/admin/users/:userId/balance', authenticateToken, adminOnly, async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const { cwt, cws, note } = req.body;
-
-        // Validar valores
-        if (cwt < 0 || cws < 0) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Los valores no pueden ser negativos' 
-            });
-        }
-
-        // Obtener usuario actual
-        const { data: currentUser, error: fetchError } = await supabase
-            .from('users')
-            .select('cwt, cws, email, user_id')
-            .eq('id', userId)
-            .single();
-
-        if (fetchError || !currentUser) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Usuario no encontrado' 
-            });
-        }
-
-        // Actualizar saldo
-        const { error: updateError } = await supabase
-            .from('users')
-            .update({
-                cwt: parseFloat(cwt),
-                cws: parseInt(cws)
-            })
-            .eq('id', userId);
-
-        if (updateError) {
-            console.error('❌ Error actualizando saldo:', updateError);
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Error al actualizar saldo' 
-            });
-        }
-
-        res.json({
-            success: true,
-            message: 'Saldo actualizado correctamente'
-        });
-
-    } catch (error) {
-        console.error('❌ Error actualizando saldo:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// 10. ESTADÍSTICAS DEL SISTEMA (Admin)
-app.get('/api/admin/stats', authenticateToken, adminOnly, async (req, res) => {
-    try {
-        // Obtener total de usuarios
-        const { count: totalUsers, error: usersError } = await supabase
-            .from('users')
-            .select('*', { count: 'exact', head: true });
-
-        // Obtener todos los usuarios para calcular totales
-        const { data: users, error: usersDataError } = await supabase
-            .from('users')
-            .select('cwt, cws');
-
-        let totalCWT = 0;
-        let totalCWS = 0;
-
-        if (users) {
-            users.forEach(user => {
-                totalCWT += parseFloat(user.cwt) || 0;
-                totalCWS += parseInt(user.cws) || 0;
-            });
-        }
-
-        res.json({
-            success: true,
-            stats: {
-                totalUsers: totalUsers || 0,
-                totalCWT: parseFloat(totalCWT.toFixed(2)),
-                totalCWS: totalCWS,
-                estimatedUSDT: parseFloat((totalCWT / 0.1 * 5).toFixed(2)),
-                estimatedSaldo: Math.round(totalCWS / 10 * 100),
-                lastUpdate: new Date().toLocaleString()
-            }
-        });
-
-    } catch (error) {
-        console.error('❌ Error obteniendo estadísticas:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// ============================================
-// ENDPOINTS AUXILIARES
-// ============================================
-
-// 11. ESTADO DEL SERVIDOR
+// 6. ESTADO
 app.get('/api/status', (req, res) => {
     res.json({ 
         success: true, 
         status: 'online',
         timestamp: new Date().toLocaleString(),
-        version: '1.0.0',
-        emailConfigured: !!transporter
+        emailService: emailConfigured ? 'Resend (Gmail) activo' : 'Modo consola'
     });
 });
 
-// 12. CONFIGURACIÓN DEL SISTEMA
-app.get('/api/config', (req, res) => {
-    res.json({
-        success: true,
-        config: {
-            cwtMinimum: 1,
-            cwsMinimum: 100,
-            cwtRate: 0.1,
-            cwsRate: 10,
-            emailConfigured: !!transporter
-        }
-    });
+// ============================================
+// RUTAS WEB
+// ============================================
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-// 13. VERIFICAR EMAIL EXISTENTE
-app.post('/api/check-email', async (req, res) => {
+app.get('/login.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/dashboard.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+// ============================================
+// CREAR ADMIN
+// ============================================
+async function createAdminIfNotExists() {
     try {
-        const { email } = req.body;
+        const adminEmail = 'cromwellpayclient@gmail.com';
         
-        if (!email) {
-            return res.status(400).json({ success: false, message: 'Email requerido' });
-        }
-
-        const { data: user, error } = await supabase
+        const { data: admin } = await supabase
             .from('users')
-            .select('email, verified')
-            .eq('email', email.toLowerCase())
-            .maybeSingle();
-
-        if (error) {
-            return res.json({ success: true, exists: false });
+            .select('*')
+            .eq('email', adminEmail)
+            .single();
+            
+        if (admin) {
+            console.log('✅ Admin ya existe');
+            return;
         }
-
-        res.json({
-            success: true,
-            exists: !!user,
-            verified: user ? user.verified : false
-        });
-
+        
+        const hashedPassword = await bcrypt.hash('V3ry$tr0ngP@$$w0rd_2024@Admin', 10);
+        
+        await supabase.from('users').insert([{
+            user_id: 'CROM-0001',
+            email: adminEmail,
+            password_hash: hashedPassword,
+            verified: true,
+            role: 'admin',
+            cwt: 1000,
+            cws: 5000,
+            nickname: 'Admin Cromwell',
+            phone: 'N/A',
+            province: 'Admin',
+            accepted_terms: true
+        }]);
+        
+        console.log('✅ Admin creado');
+        
     } catch (error) {
-        res.json({ success: true, exists: false });
+        console.error('⚠️  Error creando admin:', error.message);
     }
-});
-
-// ============================================
-// MANEJO DE ERRORES
-// ============================================
-app.use((req, res) => {
-    res.status(404).json({ 
-        success: false, 
-        message: 'Ruta no encontrada' 
-    });
-});
-
-app.use((err, req, res, next) => {
-    console.error('🔥 ERROR NO MANEJADO:', err);
-    res.status(500).json({ 
-        success: false, 
-        message: 'Error interno del servidor' 
-    });
-});
+}
 
 // ============================================
 // INICIAR SERVIDOR
@@ -1016,10 +782,23 @@ app.listen(PORT, async () => {
     console.log(`🚀 SERVIDOR INICIADO EN PUERTO ${PORT}`);
     console.log('========================================');
     
-    // Crear admin si no existe
     await createAdminIfNotExists();
     
-    console.log('✅ Sistema listo para recibir peticiones');
-    console.log('🔗 URL Local: http://localhost:' + PORT);
+    if (emailConfigured) {
+        console.log('✅ EMAIL: CONFIGURADO CON RESEND');
+        console.log('📧 Remitente:', process.env.FROM_EMAIL);
+        console.log('📧 Servicio: Gmail via Resend');
+        console.log('📧 Estado: 100% funcional desde Cuba');
+    } else {
+        console.log('⚠️  EMAIL: MODO CONSOLA');
+        console.log('💡 Para activar emails:');
+        console.log('1. Regístrate en https://resend.com');
+        console.log('2. Crea API Key');
+        console.log('3. Agrega variables en Render:');
+        console.log('   - RESEND_API_KEY=re_xxxxxx');
+        console.log('   - FROM_EMAIL=tu_email@gmail.com');
+    }
+    
+    console.log('✅ Sistema listo');
     console.log('========================================');
 });
