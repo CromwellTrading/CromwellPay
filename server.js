@@ -14,29 +14,87 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ============================================
+// VERIFICACIÓN DE CONFIGURACIÓN
+// ============================================
+console.log('🔧 === INICIANDO CROMWELL PAY ===');
+console.log('📊 Puerto:', PORT);
+console.log('🔄 Supabase URL:', process.env.SUPABASE_URL ? '✅ Configurada' : '❌ FALTA');
+console.log('🔑 Supabase Key:', process.env.SUPABASE_SERVICE_KEY ? '✅ Configurada' : '❌ FALTA');
+console.log('📧 Email User:', process.env.EMAIL_USER ? '✅ Configurado' : '❌ FALTA');
+console.log('🔐 JWT Secret:', process.env.JWT_SECRET ? '✅ Configurado' : '❌ FALTA');
+
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+    console.error('🚨 ERROR CRÍTICO: Faltan variables de entorno esenciales');
+    process.exit(1);
+}
+
+// ============================================
 // CONFIGURACIÓN SUPABASE
 // ============================================
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Configuración de JWT
+console.log('✅ Supabase client inicializado');
+
+// ============================================
+// CONFIGURACIÓN JWT
+// ============================================
 const JWT_SECRET = process.env.JWT_SECRET || 'cromwell_pay_secret_key_production_2024';
 const JWT_EXPIRES_IN = '7d';
 
-// Configuración de Nodemailer (Gmail)
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER || 'cromwellpayclient@gmail.com',
-        pass: process.env.EMAIL_PASS || 'qryrdwvjttwcgmyr'
-    }
-});
+// ============================================
+// CONFIGURACIÓN NODEMAILER
+// ============================================
+console.log('📧 Configurando Nodemailer...');
+let transporter;
+try {
+    transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+            user: process.env.EMAIL_USER || 'cromwellpayclient@gmail.com',
+            pass: process.env.EMAIL_PASS || 'qryrdwvjttwcgmyr'
+        },
+        tls: {
+            rejectUnauthorized: false // Para evitar problemas de certificado en desarrollo
+        }
+    });
+    
+    // Verificar conexión con Gmail
+    transporter.verify((error, success) => {
+        if (error) {
+            console.error('❌ Error al conectar con Gmail:', error.message);
+            console.log('💡 Consejo: Verifica que:');
+            console.log('   1. El correo exista');
+            console.log('   2. La contraseña sea correcta');
+            console.log('   3. Tengas habilitado "Acceso de apps menos seguras"');
+        } else {
+            console.log('✅ Nodemailer configurado y listo para enviar emails');
+        }
+    });
+} catch (emailError) {
+    console.error('❌ Error configurando Nodemailer:', emailError.message);
+}
 
-// Middleware
-app.use(cors());
+// ============================================
+// MIDDLEWARE
+// ============================================
+app.use(cors({
+    origin: ['http://localhost:3000', 'http://localhost:5000', 'https://cromwell-pay.onrender.com'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(bodyParser.json());
 app.use(express.static('public'));
+
+// Middleware de logs detallados
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log('Headers:', req.headers);
+    next();
+});
 
 // Middleware de autenticación
 const authenticateToken = (req, res, next) => {
@@ -49,6 +107,7 @@ const authenticateToken = (req, res, next) => {
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) {
+            console.error('❌ Error verificando token:', err.message);
             return res.status(403).json({ success: false, message: 'Token inválido o expirado' });
         }
         req.user = user;
@@ -78,6 +137,11 @@ function generateUserId() {
 }
 
 async function sendVerificationEmail(email, code) {
+    if (!transporter) {
+        console.error('❌ Transporter no configurado');
+        return false;
+    }
+
     const mailOptions = {
         from: `"Cromwell Pay" <${process.env.EMAIL_USER}>`,
         to: email,
@@ -123,14 +187,20 @@ async function sendVerificationEmail(email, code) {
 
     try {
         await transporter.sendMail(mailOptions);
+        console.log(`✅ Email de verificación enviado a ${email}`);
         return true;
     } catch (error) {
-        console.error('Error al enviar correo:', error);
+        console.error('❌ Error al enviar correo:', error.message);
         return false;
     }
 }
 
 async function sendNotificationEmail(email, title, message) {
+    if (!transporter) {
+        console.error('❌ Transporter no configurado');
+        return false;
+    }
+
     const mailOptions = {
         from: `"Cromwell Pay" <${process.env.EMAIL_USER}>`,
         to: email,
@@ -163,7 +233,7 @@ async function sendNotificationEmail(email, title, message) {
         await transporter.sendMail(mailOptions);
         return true;
     } catch (error) {
-        console.error('Error al enviar notificación por email:', error);
+        console.error('❌ Error al enviar notificación por email:', error.message);
         return false;
     }
 }
@@ -174,17 +244,8 @@ async function sendNotificationEmail(email, title, message) {
 
 // Página principal (redirige a login)
 app.get('/', (req, res) => {
-    res.redirect('/login');
-});
-
-// Página de login
-app.get('/login', (req, res) => {
-    res.sendFile('login.html', { root: 'public' });
-});
-
-// Página de dashboard
-app.get('/dashboard', (req, res) => {
-    res.sendFile('dashboard.html', { root: 'public' });
+    console.log('📄 Sirviendo página principal');
+    res.redirect('/login.html');
 });
 
 // ============================================
@@ -193,30 +254,37 @@ app.get('/dashboard', (req, res) => {
 
 // 1. Registro de usuario
 app.post('/api/register', async (req, res) => {
+    console.log('📝 Intentando registro:', req.body.email);
+    
     try {
         const { email, password, termsAccepted } = req.body;
 
         // Validaciones
         if (!email || !password) {
+            console.log('❌ Validación fallida: Email o contraseña faltantes');
             return res.status(400).json({ success: false, message: 'Email y contraseña son requeridos' });
         }
 
         if (!termsAccepted) {
+            console.log('❌ Validación fallida: Términos no aceptados');
             return res.status(400).json({ success: false, message: 'Debes aceptar los términos y condiciones' });
         }
 
         // Validar formato de email
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
+            console.log('❌ Validación fallida: Email no válido');
             return res.status(400).json({ success: false, message: 'Email no válido' });
         }
 
         // Validar longitud de contraseña
         if (password.length < 6) {
+            console.log('❌ Validación fallida: Contraseña muy corta');
             return res.status(400).json({ success: false, message: 'La contraseña debe tener al menos 6 caracteres' });
         }
 
         // Verificar si el usuario ya existe en Supabase
+        console.log('🔍 Verificando si usuario existe:', email.toLowerCase());
         const { data: existingUser, error: userError } = await supabase
             .from('users')
             .select('*')
@@ -224,11 +292,18 @@ app.post('/api/register', async (req, res) => {
             .single();
 
         if (existingUser) {
+            console.log('❌ Usuario ya existe:', email);
             return res.status(400).json({ success: false, message: 'Este email ya está registrado' });
+        }
+
+        if (userError && userError.code !== 'PGRST116') { // PGRST116 = no encontrado
+            console.error('❌ Error al buscar usuario:', userError);
+            return res.status(500).json({ success: false, message: 'Error al verificar el usuario' });
         }
 
         // Hashear contraseña
         const hashedPassword = await bcrypt.hash(password, 10);
+        console.log('🔐 Contraseña hasheada para:', email);
 
         // Crear usuario en Supabase
         const newUser = {
@@ -250,6 +325,7 @@ app.post('/api/register', async (req, res) => {
             accepted_terms: true
         };
 
+        console.log('👤 Creando usuario:', newUser.user_id);
         const { data: createdUser, error: createError } = await supabase
             .from('users')
             .insert([newUser])
@@ -257,12 +333,13 @@ app.post('/api/register', async (req, res) => {
             .single();
 
         if (createError) {
-            console.error('Error al crear usuario:', createError);
+            console.error('❌ Error al crear usuario:', createError);
             return res.status(500).json({ success: false, message: 'Error al crear el usuario' });
         }
 
         // Generar código de verificación
         const verificationCode = generateVerificationCode();
+        console.log('🔑 Código generado para:', email);
         
         // Guardar código en Supabase
         const verificationData = {
@@ -276,38 +353,44 @@ app.post('/api/register', async (req, res) => {
             .insert([verificationData]);
 
         if (codeError) {
-            console.error('Error al guardar código:', codeError);
+            console.error('❌ Error al guardar código:', codeError);
             await supabase.from('users').delete().eq('email', email.toLowerCase());
             return res.status(500).json({ success: false, message: 'Error al generar código de verificación' });
         }
 
         // Enviar correo de verificación
+        console.log('📧 Enviando email de verificación a:', email);
         const emailSent = await sendVerificationEmail(email, verificationCode);
         
         if (!emailSent) {
+            console.error('❌ Falló el envío de email, limpiando...');
             await supabase.from('users').delete().eq('email', email.toLowerCase());
             await supabase.from('verification_codes').delete().eq('email', email.toLowerCase());
             return res.status(500).json({ success: false, message: 'Error al enviar el correo de verificación' });
         }
 
+        console.log('✅ Registro exitoso para:', email);
         res.json({ 
             success: true, 
             message: 'Registro exitoso. Se ha enviado un código de verificación a tu email.' 
         });
 
     } catch (error) {
-        console.error('Error en registro:', error);
+        console.error('❌ Error en registro:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
 
 // 2. Verificación de email
 app.post('/api/verify', async (req, res) => {
+    console.log('🔐 Intentando verificación para:', req.body.email);
+    
     try {
         const { email, code } = req.body;
 
         // Validaciones
         if (!email || !code) {
+            console.log('❌ Validación fallida: Email o código faltantes');
             return res.status(400).json({ success: false, message: 'Email y código son requeridos' });
         }
 
@@ -319,16 +402,19 @@ app.post('/api/verify', async (req, res) => {
             .single();
 
         if (!user) {
+            console.log('❌ Usuario no encontrado:', email);
             return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
         }
 
         // Verificar si ya está verificado
         if (user.verified) {
+            console.log('ℹ️ Usuario ya verificado:', email);
             return res.json({ success: true, message: 'El usuario ya está verificado' });
         }
 
         // Verificar intentos de verificación
         if (user.verification_attempts >= 5) {
+            console.log('🚫 Demasiados intentos para:', email);
             return res.status(429).json({ 
                 success: false, 
                 message: 'Demasiados intentos fallidos. Intenta nuevamente más tarde.' 
@@ -345,6 +431,7 @@ app.post('/api/verify', async (req, res) => {
 
         if (!verification) {
             // Incrementar intentos fallidos
+            console.log('❌ Código inválido para:', email);
             await supabase
                 .from('users')
                 .update({ 
@@ -362,6 +449,7 @@ app.post('/api/verify', async (req, res) => {
 
         // Verificar expiración
         if (new Date(verification.expires_at) < new Date()) {
+            console.log('⌛ Código expirado para:', email);
             await supabase.from('verification_codes').delete().eq('id', verification.id);
             return res.status(400).json({ success: false, message: 'El código ha expirado' });
         }
@@ -377,7 +465,7 @@ app.post('/api/verify', async (req, res) => {
             .eq('email', email.toLowerCase());
 
         if (updateError) {
-            console.error('Error al actualizar usuario:', updateError);
+            console.error('❌ Error al actualizar usuario:', updateError);
             return res.status(500).json({ success: false, message: 'Error al verificar el usuario' });
         }
 
@@ -400,6 +488,7 @@ app.post('/api/verify', async (req, res) => {
         const userResponse = { ...user };
         delete userResponse.password_hash;
 
+        console.log('✅ Verificación exitosa para:', email);
         res.json({
             success: true,
             message: '¡Email verificado exitosamente!',
@@ -408,18 +497,21 @@ app.post('/api/verify', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error en verificación:', error);
+        console.error('❌ Error en verificación:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
 
 // 3. Login de usuario
 app.post('/api/login', async (req, res) => {
+    console.log('🔐 Intentando login para:', req.body.email);
+    
     try {
         const { email, password, rememberUser } = req.body;
 
         // Validaciones
         if (!email || !password) {
+            console.log('❌ Validación fallida: Credenciales incompletas');
             return res.status(400).json({ success: false, message: 'Email y contraseña son requeridos' });
         }
 
@@ -431,6 +523,7 @@ app.post('/api/login', async (req, res) => {
             .single();
 
         if (!user) {
+            console.log('❌ Usuario no encontrado:', email);
             return res.status(404).json({ 
                 success: false, 
                 message: 'Credenciales incorrectas'
@@ -439,6 +532,7 @@ app.post('/api/login', async (req, res) => {
 
         // Verificar si el email está verificado
         if (!user.verified) {
+            console.log('⚠️ Usuario no verificado:', email);
             return res.status(403).json({ 
                 success: false, 
                 message: 'Debes verificar tu email antes de iniciar sesión. Revisa tu correo.' 
@@ -449,6 +543,7 @@ app.post('/api/login', async (req, res) => {
         const passwordMatch = await bcrypt.compare(password, user.password_hash);
         
         if (!passwordMatch) {
+            console.log('❌ Contraseña incorrecta para:', email);
             return res.status(401).json({ 
                 success: false, 
                 message: 'Credenciales incorrectas'
@@ -477,6 +572,7 @@ app.post('/api/login', async (req, res) => {
         const userResponse = { ...user };
         delete userResponse.password_hash;
 
+        console.log('✅ Login exitoso para:', email);
         res.json({
             success: true,
             message: 'Login exitoso',
@@ -485,17 +581,20 @@ app.post('/api/login', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error en login:', error);
+        console.error('❌ Error en login:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
 
 // 4. Reenviar código de verificación
 app.post('/api/resend-code', async (req, res) => {
+    console.log('🔄 Reenviando código para:', req.body.email);
+    
     try {
         const { email } = req.body;
 
         if (!email) {
+            console.log('❌ Email faltante');
             return res.status(400).json({ success: false, message: 'Email es requerido' });
         }
 
@@ -507,11 +606,13 @@ app.post('/api/resend-code', async (req, res) => {
             .single();
 
         if (!user) {
+            console.log('❌ Usuario no encontrado:', email);
             return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
         }
 
         // Verificar si ya está verificado
         if (user.verified) {
+            console.log('ℹ️ Usuario ya verificado:', email);
             return res.json({ success: true, message: 'El usuario ya está verificado' });
         }
 
@@ -520,6 +621,7 @@ app.post('/api/resend-code', async (req, res) => {
 
         // Generar nuevo código
         const verificationCode = generateVerificationCode();
+        console.log('🔑 Nuevo código generado para:', email);
         
         // Guardar código en Supabase
         const verificationData = {
@@ -533,7 +635,7 @@ app.post('/api/resend-code', async (req, res) => {
             .insert([verificationData]);
 
         if (codeError) {
-            console.error('Error al guardar código:', codeError);
+            console.error('❌ Error al guardar código:', codeError);
             return res.status(500).json({ 
                 success: false, 
                 message: 'Error al generar código de verificación' 
@@ -541,6 +643,7 @@ app.post('/api/resend-code', async (req, res) => {
         }
 
         // Enviar correo
+        console.log('📧 Reenviando email a:', email);
         const emailSent = await sendVerificationEmail(email, verificationCode);
         
         if (!emailSent) {
@@ -551,13 +654,14 @@ app.post('/api/resend-code', async (req, res) => {
             });
         }
 
+        console.log('✅ Código reenviado a:', email);
         res.json({ 
             success: true, 
             message: 'Se ha enviado un nuevo código de verificación a tu email.' 
         });
 
     } catch (error) {
-        console.error('Error al reenviar código:', error);
+        console.error('❌ Error al reenviar código:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -568,6 +672,8 @@ app.post('/api/resend-code', async (req, res) => {
 
 // 5. Dashboard del usuario
 app.get('/api/dashboard', authenticateToken, async (req, res) => {
+    console.log('📊 Dashboard solicitado por:', req.user.email);
+    
     try {
         const userId = req.user.id;
 
@@ -579,6 +685,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             .single();
 
         if (!user) {
+            console.log('❌ Usuario no encontrado en dashboard:', userId);
             return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
         }
 
@@ -586,6 +693,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         const userResponse = { ...user };
         delete userResponse.password_hash;
 
+        console.log('✅ Dashboard servido para:', user.email);
         res.json({
             success: true,
             user: userResponse,
@@ -601,19 +709,22 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error en dashboard:', error);
+        console.error('❌ Error en dashboard:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
 
 // 6. Actualizar perfil de usuario
 app.put('/api/user/profile', authenticateToken, async (req, res) => {
+    console.log('👤 Actualizando perfil para:', req.user.email);
+    
     try {
         const userId = req.user.id;
         const { nickname, phone, province, wallet, notifications } = req.body;
 
         // Validar campos obligatorios
         if (!nickname || !phone || !province) {
+            console.log('❌ Validación fallida: Campos obligatorios faltantes');
             return res.status(400).json({ 
                 success: false, 
                 message: 'Nickname, teléfono y provincia son obligatorios' 
@@ -636,13 +747,14 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             .single();
 
         if (error) {
-            console.error('Error al actualizar perfil:', error);
+            console.error('❌ Error al actualizar perfil:', error);
             return res.status(500).json({ success: false, message: 'Error al actualizar el perfil' });
         }
 
         const userResponse = { ...data };
         delete userResponse.password_hash;
 
+        console.log('✅ Perfil actualizado para:', req.user.email);
         res.json({
             success: true,
             message: 'Perfil actualizado exitosamente',
@@ -650,13 +762,15 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error al actualizar perfil:', error);
+        console.error('❌ Error al actualizar perfil:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
 
 // 7. Verificar token
 app.post('/api/verify-token', authenticateToken, async (req, res) => {
+    console.log('🔐 Verificando token para:', req.user.email);
+    
     try {
         const { data: user, error } = await supabase
             .from('users')
@@ -665,19 +779,21 @@ app.post('/api/verify-token', authenticateToken, async (req, res) => {
             .single();
         
         if (!user) {
+            console.log('❌ Usuario no encontrado:', req.user.id);
             return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
         }
 
         const userResponse = { ...user };
         delete userResponse.password_hash;
 
+        console.log('✅ Token verificado para:', user.email);
         res.json({
             success: true,
             user: userResponse
         });
 
     } catch (error) {
-        console.error('Error al verificar token:', error);
+        console.error('❌ Error al verificar token:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -718,7 +834,7 @@ async function createNotification(userId, title, message, type = 'info') {
 
         return notification;
     } catch (error) {
-        console.error('Error al crear notificación:', error);
+        console.error('❌ Error al crear notificación:', error);
         return null;
     }
 }
@@ -742,7 +858,7 @@ app.get('/api/notifications', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error al obtener notificaciones:', error);
+        console.error('❌ Error al obtener notificaciones:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -767,7 +883,7 @@ app.post('/api/notifications/mark-read', authenticateToken, async (req, res) => 
         });
 
     } catch (error) {
-        console.error('Error al marcar notificación como leída:', error);
+        console.error('❌ Error al marcar notificación como leída:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -791,7 +907,7 @@ app.post('/api/notifications/mark-all-read', authenticateToken, async (req, res)
         });
 
     } catch (error) {
-        console.error('Error al marcar todas las notificaciones como leídas:', error);
+        console.error('❌ Error al marcar todas las notificaciones como leídas:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -814,7 +930,7 @@ app.delete('/api/notifications', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error al eliminar notificaciones:', error);
+        console.error('❌ Error al eliminar notificaciones:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -853,7 +969,7 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
         });
 
     } catch (error) {
-        console.error('Error al obtener usuarios:', error);
+        console.error('❌ Error al obtener usuarios:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -960,7 +1076,7 @@ app.put('/api/admin/users/:id/balance', authenticateToken, requireAdmin, async (
         });
 
     } catch (error) {
-        console.error('Error al actualizar saldo:', error);
+        console.error('❌ Error al actualizar saldo:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -1000,16 +1116,20 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
         });
 
     } catch (error) {
-        console.error('Error al obtener estadísticas:', error);
+        console.error('❌ Error al obtener estadísticas:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
 
 // 16. Inicializar base de datos (crear usuario admin si no existe)
 app.post('/api/admin/init-db', async (req, res) => {
+    console.log('🔧 Intentando inicializar base de datos...');
+    
     try {
         const adminEmail = process.env.ADMIN_EMAIL || 'cromwellpayclient@gmail.com';
         const adminPassword = process.env.ADMIN_PASSWORD || 'V3ry$tr0ngP@$$w0rd_2024@Admin';
+
+        console.log('👤 Verificando admin:', adminEmail);
 
         // Verificar si ya existe el admin
         const { data: existingAdmin, error } = await supabase
@@ -1019,6 +1139,7 @@ app.post('/api/admin/init-db', async (req, res) => {
             .single();
 
         if (existingAdmin) {
+            console.log('✅ Admin ya existe');
             return res.json({ 
                 success: true, 
                 message: 'Base de datos ya inicializada',
@@ -1046,14 +1167,19 @@ app.post('/api/admin/init-db', async (req, res) => {
             accepted_terms: true
         };
 
+        console.log('👤 Creando usuario admin...');
         const { data: createdAdmin, error: createError } = await supabase
             .from('users')
             .insert([adminUser])
             .select()
             .single();
 
-        if (createError) throw createError;
+        if (createError) {
+            console.error('❌ Error al crear admin:', createError);
+            throw createError;
+        }
 
+        console.log('✅ Admin creado exitosamente');
         res.json({ 
             success: true, 
             message: 'Base de datos inicializada exitosamente',
@@ -1065,7 +1191,7 @@ app.post('/api/admin/init-db', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error al inicializar DB:', error);
+        console.error('❌ Error al inicializar DB:', error);
         res.status(500).json({ success: false, message: 'Error al inicializar la base de datos' });
     }
 });
@@ -1076,6 +1202,8 @@ app.post('/api/admin/init-db', async (req, res) => {
 
 // 17. Estado del servidor
 app.get('/api/status', async (req, res) => {
+    console.log('📊 Estado del servidor solicitado');
+    
     try {
         // Obtener estadísticas de usuarios
         const { data: users, error: usersError } = await supabase
@@ -1096,7 +1224,7 @@ app.get('/api/status', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error en status:', error);
+        console.error('❌ Error en status:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -1167,7 +1295,7 @@ app.post('/api/forgot-password', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error en recuperación de contraseña:', error);
+        console.error('❌ Error en recuperación de contraseña:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
@@ -1241,22 +1369,45 @@ app.post('/api/reset-password', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error al resetear contraseña:', error);
+        console.error('❌ Error al resetear contraseña:', error);
         res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
 
 // ============================================
-// RUTA DE FALLBACK PARA SPA
+// MANEJO DE ERRORES GLOBAL
 // ============================================
+app.use((err, req, res, next) => {
+    console.error('🔥 ERROR GLOBAL:', err);
+    res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor',
+        error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+});
+
+// Ruta de fallback para SPA
 app.get('*', (req, res) => {
-    res.redirect('/login');
+    console.log('📄 Sirviendo archivo estático:', req.path);
+    res.sendFile(req.path, { root: 'public' }, (err) => {
+        if (err) {
+            console.log('📄 Redirigiendo a login...');
+            res.redirect('/login.html');
+        }
+    });
 });
 
 // ============================================
 // INICIAR SERVIDOR
 // ============================================
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor Cromwell Pay corriendo en http://localhost:${PORT}`);
-    console.log('📊 Configurado con Supabase como base de datos');
+    console.log('========================================');
+    console.log(`🚀 SERVIDOR CROMWELL PAY INICIADO`);
+    console.log(`🌐 URL: http://localhost:${PORT}`);
+    console.log(`📧 Email configurado: ${process.env.EMAIL_USER}`);
+    console.log(`🛡️  JWT Secret: ${process.env.JWT_SECRET ? 'Configurado' : 'No configurado'}`);
+    console.log(`📊 Supabase: ${process.env.SUPABASE_URL ? 'Conectado' : 'No conectado'}`);
+    console.log('========================================');
+    console.log('✅ Sistema listo para recibir peticiones');
+    console.log('========================================');
 });
