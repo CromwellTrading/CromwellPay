@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cromwell Pay | Registro</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            width: 100%;
+            max-width: 400px;
+            padding: 30px;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #00ff9d;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: rgba(255,255,255,0.8);
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 1rem;
+        }
+        input:focus {
+            outline: none;
+            border-color: #00ff9d;
+        }
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #00ff9d, #00cc7a);
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .btn:hover {
+            opacity: 0.9;
+        }
+        .back-link {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .back-link a {
+            color: #6c63ff;
+            text-decoration: none;
+        }
+        .terms {
+            font-size: 0.9rem;
+            color: rgba(255,255,255,0.6);
+            margin-top: 20px;
+        }
+        .error {
+            color: #ff3e80;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">CROMWELL PAY</div>
+        
+        <form id="registerForm">
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="email" required>
+            </div>
+            
+            <div class="form-group">
+                <label>Contraseña</label>
+                <input type="password" id="password" required minlength="6">
+            </div>
+            
+            <div class="form-group">
+                <label>Confirmar Contraseña</label>
+                <input type="password" id="confirmPassword" required>
+            </div>
+            
+            <div class="terms">
+                <input type="checkbox" id="terms" required>
+                <label for="terms">Acepto los términos y condiciones</label>
+            </div>
+            
+            <div id="errorMessage" class="error"></div>
+            
+            <button type="submit" class="btn">Crear Cuenta</button>
+        </form>
+        
+        <div class="back-link">
+            <a href="/login">← Volver al Login</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('registerForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const errorMessage = document.getElementById('errorMessage');
+            
+            // Validaciones
+            if (password !== confirmPassword) {
+                errorMessage.textContent = 'Las contraseñas no coinciden';
+                return;
+            }
+            
+            if (password.length < 6) {
+                errorMessage.textContent = 'La contraseña debe tener al menos 6 caracteres';
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email,
+                        password,
+                        termsAccepted: true
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Registro exitoso. Revisa tu email para el código de verificación.');
+                    window.location.href = '/login';
+                } else {
+                    errorMessage.textContent = data.message || 'Error en el registro';
+                }
+            } catch (error) {
+                errorMessage.textContent = 'Error de conexión con el servidor';
+            }
+        });
+    </script>
+</body>
+</html>
