@@ -7,6 +7,9 @@ const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const { createClient } = require('@supabase/supabase-js');
 
+// Cargar variables de entorno
+require('dotenv').config();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -25,8 +28,8 @@ const JWT_EXPIRES_IN = '7d';
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: process.env.EMAIL_USER || 'cromwellpay@gmail.com',
-        pass: process.env.EMAIL_PASS || 'tu_contraseña_de_aplicacion'
+        user: process.env.EMAIL_USER || 'cromwellpayclient@gmail.com',
+        pass: process.env.EMAIL_PASS || 'qryrdwvjttwcgmyr'
     }
 });
 
@@ -76,7 +79,7 @@ function generateUserId() {
 
 async function sendVerificationEmail(email, code) {
     const mailOptions = {
-        from: '"Cromwell Pay" <cromwellpay@gmail.com>',
+        from: `"Cromwell Pay" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: 'Código de Verificación - Cromwell Pay',
         html: `
@@ -129,7 +132,7 @@ async function sendVerificationEmail(email, code) {
 
 async function sendNotificationEmail(email, title, message) {
     const mailOptions = {
-        from: '"Cromwell Pay" <cromwellpay@gmail.com>',
+        from: `"Cromwell Pay" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: title,
         html: `
@@ -164,6 +167,25 @@ async function sendNotificationEmail(email, title, message) {
         return false;
     }
 }
+
+// ============================================
+// RUTAS PARA PÁGINAS HTML
+// ============================================
+
+// Página principal (redirige a login)
+app.get('/', (req, res) => {
+    res.redirect('/login');
+});
+
+// Página de login
+app.get('/login', (req, res) => {
+    res.sendFile('login.html', { root: 'public' });
+});
+
+// Página de dashboard
+app.get('/dashboard', (req, res) => {
+    res.sendFile('dashboard.html', { root: 'public' });
+});
 
 // ============================================
 // ENDPOINTS DE AUTENTICACIÓN
@@ -986,11 +1008,14 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
 // 16. Inicializar base de datos (crear usuario admin si no existe)
 app.post('/api/admin/init-db', async (req, res) => {
     try {
+        const adminEmail = process.env.ADMIN_EMAIL || 'cromwellpayclient@gmail.com';
+        const adminPassword = process.env.ADMIN_PASSWORD || 'V3ry$tr0ngP@$$w0rd_2024@Admin';
+
         // Verificar si ya existe el admin
         const { data: existingAdmin, error } = await supabase
             .from('users')
             .select('*')
-            .eq('email', 'cromwellpay@gmail.com')
+            .eq('email', adminEmail)
             .single();
 
         if (existingAdmin) {
@@ -1002,16 +1027,16 @@ app.post('/api/admin/init-db', async (req, res) => {
         }
 
         // Crear usuario admin
-        const adminPassword = await bcrypt.hash('admin123', 10);
+        const hashedPassword = await bcrypt.hash(adminPassword, 10);
         const adminUser = {
             user_id: 'CROM-0001',
-            email: 'cromwellpay@gmail.com',
-            password_hash: adminPassword,
+            email: adminEmail,
+            password_hash: hashedPassword,
             verified: true,
             role: 'admin',
             cwt: 25.5,
             cws: 1250,
-            nickname: 'Administrador',
+            nickname: 'Administrador Cromwell',
             phone: '+53 5555 5555',
             province: 'La Habana',
             wallet: '',
@@ -1032,7 +1057,11 @@ app.post('/api/admin/init-db', async (req, res) => {
         res.json({ 
             success: true, 
             message: 'Base de datos inicializada exitosamente',
-            admin: createdAdmin 
+            admin: {
+                email: createdAdmin.email,
+                role: createdAdmin.role,
+                user_id: createdAdmin.user_id
+            } 
         });
 
     } catch (error) {
@@ -1100,7 +1129,7 @@ app.post('/api/forgot-password', async (req, res) => {
         const resetToken = crypto.randomBytes(32).toString('hex');
         const resetTokenExpiry = Date.now() + 3600000; // 1 hora
 
-        // Guardar token (en producción, guardar en base de datos)
+        // Guardar token
         await supabase
             .from('users')
             .update({ 
@@ -1113,7 +1142,7 @@ app.post('/api/forgot-password', async (req, res) => {
         const resetLink = `http://localhost:3000/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
         
         const mailOptions = {
-            from: '"Cromwell Pay" <cromwellpay@gmail.com>',
+            from: `"Cromwell Pay" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: 'Recuperación de Contraseña - Cromwell Pay',
             html: `
@@ -1192,7 +1221,7 @@ app.post('/api/reset-password', async (req, res) => {
 
         // Enviar notificación por email
         const mailOptions = {
-            from: '"Cromwell Pay" <cromwellpay@gmail.com>',
+            from: `"Cromwell Pay" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: 'Contraseña Restablecida - Cromwell Pay',
             html: `
@@ -1217,12 +1246,11 @@ app.post('/api/reset-password', async (req, res) => {
     }
 });
 
-// Servir archivos estáticos
-app.use(express.static('public'));
-
-// Ruta de fallback para SPA
+// ============================================
+// RUTA DE FALLBACK PARA SPA
+// ============================================
 app.get('*', (req, res) => {
-    res.sendFile('index.html', { root: 'public' });
+    res.redirect('/login');
 });
 
 // ============================================
