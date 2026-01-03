@@ -456,11 +456,11 @@
             <!-- Formulario de Login -->
             <form id="loginForm" style="display: block;">
                 <div class="form-group">
-                    <label class="form-label">Correo Electrónico</label>
-                    <i class="fas fa-envelope input-icon"></i>
-                    <input type="email" id="loginEmail" class="form-input" 
-                           placeholder="ejemplo@gmail.com" required 
-                           autocomplete="email">
+                    <label class="form-label">Nickname de Usuario</label>
+                    <i class="fas fa-user input-icon"></i>
+                    <input type="text" id="loginNickname" class="form-input" 
+                           placeholder="Tu nombre de usuario" required 
+                           autocomplete="username">
                 </div>
                 
                 <div class="form-group">
@@ -488,11 +488,14 @@
             <!-- Formulario de Registro -->
             <form id="registerForm" style="display: none;">
                 <div class="form-group">
-                    <label class="form-label">Correo Electrónico</label>
-                    <i class="fas fa-envelope input-icon"></i>
-                    <input type="email" id="registerEmail" class="form-input" 
-                           placeholder="ejemplo@gmail.com" required 
-                           autocomplete="email">
+                    <label class="form-label">Nickname</label>
+                    <i class="fas fa-user input-icon"></i>
+                    <input type="text" id="registerNickname" class="form-input" 
+                           placeholder="Elije tu nombre de usuario" required 
+                           autocomplete="nickname" minlength="3" maxlength="20">
+                    <small style="color: rgba(255,255,255,0.5); font-size: 0.75rem; display: block; margin-top: 5px;">
+                        Solo letras, números y guiones bajos. 3-20 caracteres.
+                    </small>
                 </div>
                 
                 <div class="form-group">
@@ -533,7 +536,7 @@
             
             <div class="security-notice">
                 <i class="fas fa-shield-alt"></i>
-                Conexión segura SSL - Tus datos están protegidos
+                Sistema seguro - No requiere verificación de email
             </div>
         </div>
     </div>
@@ -583,7 +586,6 @@
         // CONFIGURACIÓN
         // ============================================
         const API_BASE_URL = window.location.origin;
-        let verificationEmail = '';
         
         // ============================================
         // MANEJO DE CHECKBOXES
@@ -693,10 +695,10 @@
         loginForm.addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const email = document.getElementById('loginEmail').value.trim();
+            const nickname = document.getElementById('loginNickname').value.trim();
             const password = document.getElementById('loginPassword').value;
             
-            if (!email || !password) {
+            if (!nickname || !password) {
                 showStatus('❌ Completa todos los campos', 'error');
                 return;
             }
@@ -712,7 +714,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ email, password })
+                    body: JSON.stringify({ nickname, password })
                 });
                 
                 const data = await response.json();
@@ -723,7 +725,7 @@
                     
                     const rememberUser = document.getElementById('rememberCheckbox').classList.contains('checked');
                     if (rememberUser) {
-                        localStorage.setItem('cromwell_remembered_user', email);
+                        localStorage.setItem('cromwell_remembered_user', nickname);
                     }
                     
                     showStatus('✅ Acceso concedido. Redirigiendo...', 'success');
@@ -733,15 +735,7 @@
                         window.location.href = 'dashboard.html';
                     }, 1500);
                 } else {
-                    if (data.needsVerification) {
-                        showStatus('⚠️ Email no verificado', 'error');
-                        localStorage.setItem('verification_email', email);
-                        setTimeout(() => {
-                            window.location.href = 'verify-email.html?email=' + encodeURIComponent(email);
-                        }, 1500);
-                    } else {
-                        showStatus(`❌ ${data.message}`, 'error');
-                    }
+                    showStatus(`❌ ${data.message}`, 'error');
                     loginBtn.innerHTML = originalText;
                     loginBtn.disabled = false;
                 }
@@ -759,13 +753,20 @@
         registerForm.addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const email = document.getElementById('registerEmail').value.trim();
+            const nickname = document.getElementById('registerNickname').value.trim();
             const password = document.getElementById('registerPassword').value;
             const confirmPassword = document.getElementById('registerConfirmPassword').value;
             const acceptedTerms = document.getElementById('termsCheckbox').classList.contains('checked');
             
-            if (!email || !password || !confirmPassword) {
+            if (!nickname || !password || !confirmPassword) {
                 showStatus('❌ Completa todos los campos', 'error');
+                return;
+            }
+            
+            // Validar formato del nickname
+            const nicknameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+            if (!nicknameRegex.test(nickname)) {
+                showStatus('❌ El nickname solo puede contener letras, números y guiones bajos (3-20 caracteres)', 'error');
                 return;
             }
             
@@ -796,7 +797,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({ 
-                        email, 
+                        nickname, 
                         password,
                         termsAccepted: true 
                     })
@@ -805,15 +806,21 @@
                 const data = await response.json();
                 
                 if (data.success) {
+                    // Guardar token y usuario
+                    if (data.token) {
+                        localStorage.setItem('cromwell_token', data.token);
+                    }
+                    if (data.user) {
+                        localStorage.setItem('cromwell_user', JSON.stringify(data.user));
+                    }
+                    
+                    showStatus('✅ Registro exitoso. Redirigiendo...', 'success');
                     registerBtn.innerHTML = '<i class="fas fa-check"></i> ¡REGISTRADO!';
                     
-                    // Guardar email para verify-email.html
-                    localStorage.setItem('verification_email', email);
-                    
-                    // Redirigir a verify-email.html
+                    // Redirigir al dashboard después de 2 segundos
                     setTimeout(() => {
-                        window.location.href = 'verify-email.html?email=' + encodeURIComponent(email);
-                    }, 1000);
+                        window.location.href = 'dashboard.html';
+                    }, 2000);
                     
                 } else {
                     showStatus(`❌ ${data.message}`, 'error');
@@ -849,7 +856,7 @@
             // Cargar usuario recordado
             const rememberedUser = localStorage.getItem('cromwell_remembered_user');
             if (rememberedUser) {
-                document.getElementById('loginEmail').value = rememberedUser;
+                document.getElementById('loginNickname').value = rememberedUser;
                 document.getElementById('rememberCheckbox').classList.add('checked');
                 document.getElementById('rememberCheckbox').querySelector('i').style.display = 'block';
             }
