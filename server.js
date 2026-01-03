@@ -19,10 +19,6 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ========== FUNCIONES AUXILIARES ==========
 
-function generarCodigoVerificacion() {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
 function generarIDUsuario() {
     const fecha = Date.now().toString();
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
@@ -82,15 +78,16 @@ app.get('/api/status', async (req, res) => {
     }
 });
 
-// 2. REGISTRO
+// 2. REGISTRO CON NICKNAME
 app.post('/api/register', async (req, res) => {
     try {
-        const { email, password, termsAccepted } = req.body;
+        const { nickname, password, termsAccepted } = req.body;
         
-        if (!email || !password) {
+        // Validaciones
+        if (!nickname || !password) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'Email y contraseña son requeridos' 
+                message: 'Nickname y contraseña son requeridos' 
             });
         }
         
@@ -101,6 +98,15 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
+        // Validar formato del nickname
+        const nicknameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+        if (!nicknameRegex.test(nickname)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'El nickname solo puede contener letras, números y guiones bajos (3-20 caracteres)' 
+            });
+        }
+        
         if (password.length < 6) {
             return res.status(400).json({ 
                 success: false, 
@@ -108,28 +114,31 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Verificar si el email ya existe
+        // Verificar si el nickname ya existe
         const { data: { users } } = await supabase.auth.admin.listUsers();
-        const userExists = users.find(u => u.email === email.toLowerCase());
+        const userExistsByNickname = users.find(u => 
+            u.user_metadata?.nickname?.toLowerCase() === nickname.toLowerCase()
+        );
         
-        if (userExists) {
+        if (userExistsByNickname) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'El email ya está registrado' 
+                message: 'El nickname ya está en uso' 
             });
         }
         
-        // Generar código de verificación
-        const verificationCode = generarCodigoVerificacion();
+        // Generar un email único basado en el nickname
+        // Usamos un dominio ficticio para evitar problemas con emails reales
+        const uniqueEmail = `${nickname.toLowerCase()}_${Date.now()}@cromwellpay.local`;
         const userId = generarIDUsuario();
         
-        // Crear usuario con verificación automática
+        // Crear usuario en Supabase con email único
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-            email: email.toLowerCase(),
+            email: uniqueEmail,
             password: password,
-            email_confirm: true,
+            email_confirm: true, // Confirmamos automáticamente
             user_metadata: {
-                nickname: email.split('@')[0],
+                nickname: nickname,
                 user_id: userId,
                 cwt: 0,
                 cws: 0,
@@ -138,9 +147,7 @@ app.post('/api/register', async (req, res) => {
                 province: '',
                 wallet_address: '',
                 notifications: true,
-                email_verified: true,
-                verification_code: verificationCode,
-                verified_at: new Date().toISOString(),
+                email_verified: true, // Sin verificación de email
                 created_at: new Date().toISOString()
             }
         });
@@ -153,8 +160,7 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        console.log(`✅ Usuario registrado: ${email} (${userId})`);
-        console.log(`🔢 Código generado: ${verificationCode}`);
+        console.log(`✅ Usuario registrado: ${nickname} (${userId})`);
         
         // Crear sesión para el usuario
         const { data: sessionData, error: sessionError } = await supabase.auth.admin.createSession({
@@ -170,15 +176,14 @@ app.post('/api/register', async (req, res) => {
         
         res.json({
             success: true,
-            message: 'Registro exitoso. Tu cuenta ha sido creada.',
-            email: email,
-            verification_code: verificationCode,
+            message: '¡Registro exitoso! Bienvenido a Cromwell Pay.',
+            nickname: nickname,
             token: sessionData?.session?.access_token || null,
             user: {
                 id: authData.user?.id,
-                email: authData.user?.email,
+                nickname: nickname,
                 user_id: userId,
-                nickname: email.split('@')[0],
+                email: uniqueEmail, // Solo para referencia interna
                 role: 'user',
                 verified: true,
                 cwt: 0,
@@ -189,7 +194,7 @@ app.post('/api/register', async (req, res) => {
                 notifications: true,
                 created_at: new Date().toISOString()
             },
-            note: 'Guarda este código en un lugar seguro. Te servirá para recuperar tu cuenta.'
+            note: 'Tu cuenta ha sido creada exitosamente. No necesitas verificar email.'
         });
         
     } catch (error) {
@@ -201,21 +206,35 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// 3. LOGIN
+// 3. LOGIN CON NICKNAME
 app.post('/api/login', async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { nickname, password } = req.body;
         
-        if (!email || !password) {
+        if (!nickname || !password) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'Email y contraseña son requeridos' 
+                message: 'Nickname y contraseña son requeridos' 
             });
         }
         
-        // Intentar login
+        // Buscar usuario por nickname
+        const { data: { users } } = await supabase.auth.admin.listUsers();
+        const targetUser = users.find(u => 
+            u.user_metadata?.nickname?.toLowerCase() === nickname.toLowerCase()
+        );
+        
+        if (!targetUser) {
+            console.error('❌ Usuario no encontrado:', nickname);
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Nickname o contraseña incorrectos' 
+            });
+        }
+        
+        // Intentar login con el email del usuario
         const { data, error } = await supabase.auth.signInWithPassword({
-            email: email.toLowerCase(),
+            email: targetUser.email,
             password: password
         });
         
@@ -223,19 +242,20 @@ app.post('/api/login', async (req, res) => {
             console.error('❌ Error en login:', error.message);
             return res.status(401).json({ 
                 success: false, 
-                message: 'Credenciales incorrectas' 
+                message: 'Nickname o contraseña incorrectos' 
             });
         }
         
+        // ÉXITO
         res.json({
             success: true,
             message: 'Inicio de sesión exitoso',
             token: data.session.access_token,
             user: {
                 id: data.user.id,
-                email: data.user.email,
+                nickname: data.user.user_metadata?.nickname || nickname,
                 user_id: data.user.user_metadata?.user_id || generarIDUsuario(),
-                nickname: data.user.user_metadata?.nickname || email.split('@')[0],
+                email: data.user.email, // Solo para referencia interna
                 role: data.user.user_metadata?.role || 'user',
                 verified: true,
                 cwt: data.user.user_metadata?.cwt || 0,
@@ -244,7 +264,7 @@ app.post('/api/login', async (req, res) => {
                 province: data.user.user_metadata?.province || '',
                 wallet_address: data.user.user_metadata?.wallet_address || '',
                 notifications: data.user.user_metadata?.notifications !== false,
-                created_at: data.user.user_metadata?.created_at || new Date().toISOString()
+                created_at: data.user.user_metadata?.created_at || data.user.created_at
             }
         });
         
@@ -268,9 +288,9 @@ app.get('/api/verify-token', authenticateToken, async (req, res) => {
             success: true,
             user: {
                 id: user.id,
-                email: user.email,
+                nickname: user.user_metadata?.nickname || 'Usuario',
                 user_id: user.user_metadata?.user_id || generarIDUsuario(),
-                nickname: user.user_metadata?.nickname || user.email.split('@')[0],
+                email: user.email, // Solo para referencia interna
                 role: user.user_metadata?.role || 'user',
                 verified: true,
                 cwt: user.user_metadata?.cwt || 0,
@@ -297,16 +317,13 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         
-        // Aquí podrías agregar más datos del dashboard
-        // Por ejemplo: estadísticas, transacciones recientes, etc.
-        
         res.json({
             success: true,
             user: {
                 id: user.id,
-                email: user.email,
+                nickname: user.user_metadata?.nickname || 'Usuario',
                 user_id: user.user_metadata?.user_id || generarIDUsuario(),
-                nickname: user.user_metadata?.nickname || user.email.split('@')[0],
+                email: user.email,
                 role: user.user_metadata?.role || 'user',
                 verified: true,
                 cwt: user.user_metadata?.cwt || 0,
@@ -343,9 +360,8 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
             success: true,
             profile: {
                 id: user.id,
-                email: user.email,
+                nickname: user.user_metadata?.nickname || 'Usuario',
                 user_id: user.user_metadata?.user_id || generarIDUsuario(),
-                nickname: user.user_metadata?.nickname || user.email.split('@')[0],
                 phone: user.user_metadata?.phone || '',
                 province: user.user_metadata?.province || '',
                 wallet_address: user.user_metadata?.wallet_address || '',
@@ -376,6 +392,22 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
                 success: false, 
                 message: 'Nickname, teléfono y provincia son requeridos' 
             });
+        }
+        
+        // Verificar si el nuevo nickname ya existe (excepto para el usuario actual)
+        if (nickname !== user.user_metadata?.nickname) {
+            const { data: { users } } = await supabase.auth.admin.listUsers();
+            const nicknameExists = users.find(u => 
+                u.id !== user.id && 
+                u.user_metadata?.nickname?.toLowerCase() === nickname.toLowerCase()
+            );
+            
+            if (nicknameExists) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'El nickname ya está en uso por otro usuario' 
+                });
+            }
         }
         
         // Actualizar usuario en Supabase
@@ -440,49 +472,49 @@ app.get('/api/user/balance', authenticateToken, async (req, res) => {
     }
 });
 
-// 9. ACTUALIZAR BALANCE (solo admin)
-app.post('/api/user/update-balance', authenticateToken, async (req, res) => {
+// 9. CAMBIAR CONTRASEÑA
+app.post('/api/user/change-password', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
-        const { cwt, cws, operation, amount, reason } = req.body;
+        const { currentPassword, newPassword, confirmPassword } = req.body;
         
-        // Verificar si es admin
-        if (user.user_metadata?.role !== 'admin') {
-            return res.status(403).json({ 
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            return res.status(400).json({ 
                 success: false, 
-                message: 'Acceso denegado. Solo administradores.' 
+                message: 'Todos los campos son requeridos' 
             });
         }
         
-        // Obtener usuario actual para actualizar balance
-        const currentCWT = user.user_metadata?.cwt || 0;
-        const currentCWS = user.user_metadata?.cws || 0;
-        
-        let newCWT = currentCWT;
-        let newCWS = currentCWS;
-        
-        if (operation === 'add') {
-            newCWT += parseFloat(cwt) || 0;
-            newCWS += parseInt(cws) || 0;
-        } else if (operation === 'subtract') {
-            newCWT -= parseFloat(cwt) || 0;
-            newCWS -= parseInt(cws) || 0;
-        } else {
-            newCWT = parseFloat(cwt) || 0;
-            newCWS = parseInt(cws) || 0;
+        if (newPassword.length < 6) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'La nueva contraseña debe tener al menos 6 caracteres' 
+            });
         }
         
-        // Asegurar que no sean negativos
-        if (newCWT < 0) newCWT = 0;
-        if (newCWS < 0) newCWS = 0;
+        if (newPassword !== confirmPassword) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Las contraseñas nuevas no coinciden' 
+            });
+        }
         
-        // Actualizar metadata del usuario
+        // Verificar contraseña actual intentando hacer login
+        const { error: loginError } = await supabase.auth.signInWithPassword({
+            email: user.email,
+            password: currentPassword
+        });
+        
+        if (loginError) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'La contraseña actual es incorrecta' 
+            });
+        }
+        
+        // Actualizar contraseña
         const { error } = await supabase.auth.updateUser({
-            data: {
-                ...user.user_metadata,
-                cwt: newCWT,
-                cws: newCWS
-            }
+            password: newPassword
         });
         
         if (error) {
@@ -491,20 +523,11 @@ app.post('/api/user/update-balance', authenticateToken, async (req, res) => {
         
         res.json({
             success: true,
-            message: 'Balance actualizado correctamente',
-            balance: {
-                cwt: newCWT,
-                cws: newCWS,
-                previous_cwt: currentCWT,
-                previous_cws: currentCWS,
-                operation,
-                reason: reason || 'Actualización manual',
-                timestamp: new Date().toISOString()
-            }
+            message: 'Contraseña actualizada exitosamente'
         });
         
     } catch (error) {
-        console.error('❌ Error actualizando balance:', error);
+        console.error('❌ Error cambiando contraseña:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -557,13 +580,11 @@ app.get('/api/admin/users', authenticateToken, async (req, res) => {
         
         const usuariosFormateados = users.map(u => ({
             id: u.id,
-            email: u.email,
-            user_id: u.user_metadata?.user_id || 'N/A',
             nickname: u.user_metadata?.nickname || 'Sin nickname',
+            user_id: u.user_metadata?.user_id || 'N/A',
             cwt: u.user_metadata?.cwt || 0,
             cws: u.user_metadata?.cws || 0,
             role: u.user_metadata?.role || 'user',
-            verified: !!u.user_metadata?.email_verified,
             phone: u.user_metadata?.phone || '',
             province: u.user_metadata?.province || '',
             wallet_address: u.user_metadata?.wallet_address || '',
@@ -652,14 +673,13 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, async (req, res) 
             message: 'Balance actualizado correctamente',
             user: {
                 id: targetUser.id,
-                email: targetUser.email,
-                user_id: targetUser.user_metadata?.user_id,
+                nickname: targetUser.user_metadata?.nickname || 'Usuario',
                 balance: {
                     previous: { cwt: currentCWT, cws: currentCWS },
                     current: { cwt: newCWT, cws: newCWS },
                     operation,
                     reason: reason || 'Actualización administrativa',
-                    updated_by: adminUser.email,
+                    updated_by: adminUser.user_metadata?.nickname || adminUser.email,
                     timestamp: new Date().toISOString()
                 }
             }
@@ -725,10 +745,10 @@ app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => 
             message: `Rol actualizado a ${role}`,
             user: {
                 id: targetUser.id,
-                email: targetUser.email,
+                nickname: targetUser.user_metadata?.nickname || 'Usuario',
                 previous_role: targetUser.user_metadata?.role || 'user',
                 new_role: role,
-                updated_by: adminUser.email,
+                updated_by: adminUser.user_metadata?.nickname || adminUser.email,
                 timestamp: new Date().toISOString()
             }
         });
@@ -792,48 +812,6 @@ app.get('/api/user/transactions', authenticateToken, async (req, res) => {
     }
 });
 
-// 15. CREAR NUEVA TRANSACCIÓN
-app.post('/api/user/transactions', authenticateToken, async (req, res) => {
-    try {
-        const user = req.user;
-        const { type, amount, currency, description } = req.body;
-        
-        if (!type || !amount || !currency) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Tipo, cantidad y moneda son requeridos' 
-            });
-        }
-        
-        // Generar ID de transacción
-        const transactionId = `TXN-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 1000)}`;
-        
-        // En un sistema real, aquí guardarías la transacción en la base de datos
-        
-        res.json({
-            success: true,
-            message: 'Transacción creada exitosamente',
-            transaction: {
-                id: transactionId,
-                user_id: user.id,
-                type,
-                amount: parseFloat(amount),
-                currency,
-                description: description || 'Sin descripción',
-                status: 'pending',
-                created_at: new Date().toISOString()
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error creando transacción:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
 // ========== RUTAS PARA ARCHIVOS HTML ==========
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/login.html');
@@ -851,10 +829,22 @@ app.get('/admin.html', (req, res) => {
     res.sendFile(__dirname + '/admin.html');
 });
 
+// Eliminar verify-email.html ya que no lo necesitamos más
+app.get('/verify-email.html', (req, res) => {
+    res.redirect('/login.html');
+});
+
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, async () => {
     console.log(`🚀 Cromwell Pay ejecutándose en http://localhost:${PORT}`);
     console.log(`🔗 Supabase: ${supabaseUrl}`);
+    
+    console.log('\n✅ SISTEMA SIMPLIFICADO CON NICKNAME:');
+    console.log('   • Registro: Solo nickname y contraseña');
+    console.log('   • Login: Solo nickname y contraseña');
+    console.log('   • NO se requiere email');
+    console.log('   • NO hay verificación de email');
+    console.log('   • Cuentas activas inmediatamente');
     
     console.log('\n✅ ENDPOINTS DISPONIBLES:');
     console.log('   PÚBLICOS:');
@@ -868,8 +858,8 @@ app.listen(PORT, async () => {
     console.log('   • GET  /api/user/profile');
     console.log('   • PUT  /api/user/profile');
     console.log('   • GET  /api/user/balance');
+    console.log('   • POST /api/user/change-password');
     console.log('   • GET  /api/user/transactions');
-    console.log('   • POST /api/user/transactions');
     console.log('   • POST /api/logout');
     
     console.log('\n   ADMIN:');
@@ -878,9 +868,9 @@ app.listen(PORT, async () => {
     console.log('   • PUT  /api/admin/users/:userId/role');
     
     console.log('\n📋 SISTEMA LISTO:');
-    console.log('   • Registro con código en pantalla');
-    console.log('   • Login inmediato');
+    console.log('   • Usuarios se registran solo con nickname');
+    console.log('   • No hay problemas con emails incorrectos');
+    console.log('   • Login inmediato después del registro');
     console.log('   • Dashboard completo');
-    console.log('   • Panel de administración');
     console.log('   • Gestión de tokens CWT/CWS');
 });
