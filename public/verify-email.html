@@ -512,57 +512,60 @@
         let countdown = 60;
         
         // ============================================
-// CONFIGURACIÓN EMAILJS
-// ============================================
-const EMAILJS_CONFIG = {
-    serviceId: 'service_6r3dv87',
-    templateId: 'plantilla_kwaxs1k', // Cambié a tu template ID español
-    userId: 'x178cSs_4rFkpOn-B'
-};
-
-// Inicializar EmailJS
-(function() {
-    emailjs.init(EMAILJS_CONFIG.userId);
-    console.log('✅ EmailJS inicializado con template:', EMAILJS_CONFIG.templateId);
-})();
-
-// Función para enviar email con EmailJS
-async function sendVerificationEmail(email, code) {
-    try {
-        const templateParams = {
-            to_email: email,
-            from_name: 'Cromwell Pay',
-            reply_to: 'cromwellpayclient@gmail.com',
-            code: code,
-            user_email: email,
-            verification_code: code,
-            verification_link: `${window.location.origin}/verify-email.html?email=${encodeURIComponent(email)}`,
-            site_name: 'Cromwell Pay',
-            current_year: new Date().getFullYear()
+        // EMAILJS CONFIGURACIÓN
+        // ============================================
+        const EMAILJS_CONFIG = {
+            serviceId: 'service_6r3dv87',
+            templateId: 'plantilla_kwaxs1k',
+            userId: 'x178cSs_4rFkpOn-B'
         };
         
-        console.log('📤 Enviando email con EmailJS...');
-        console.log('Service:', EMAILJS_CONFIG.serviceId);
-        console.log('Template:', EMAILJS_CONFIG.templateId);
-        console.log('To:', email);
-        console.log('Code:', code);
+        // Inicializar EmailJS
+        (function() {
+            emailjs.init(EMAILJS_CONFIG.userId);
+            console.log('✅ EmailJS inicializado con template:', EMAILJS_CONFIG.templateId);
+        })();
         
-        const response = await emailjs.send(
-            EMAILJS_CONFIG.serviceId,
-            EMAILJS_CONFIG.templateId,
-            templateParams
-        );
-        
-        console.log('✅ Email enviado via EmailJS:', response);
-        return { success: true, message: 'Email enviado correctamente' };
-    } catch (error) {
-        console.error('❌ Error enviando email:', error);
-        return { 
-            success: false, 
-            message: 'Error al enviar el email. Código: ' + code 
-        };
-    }
-}
+        // ============================================
+        // FUNCIÓN PARA ENVIAR EMAIL CON EMAILJS
+        // ============================================
+        async function sendVerificationEmail(email, code) {
+            try {
+                const templateParams = {
+                    to_email: email,
+                    from_name: 'Cromwell Pay',
+                    reply_to: 'cromwellpayclient@gmail.com',
+                    code: code,
+                    user_email: email,
+                    verification_code: code,
+                    verification_link: `${window.location.origin}/verify-email.html?email=${encodeURIComponent(email)}`,
+                    site_name: 'Cromwell Pay',
+                    current_year: new Date().getFullYear()
+                };
+                
+                console.log('📤 Enviando email con EmailJS...');
+                console.log('Service:', EMAILJS_CONFIG.serviceId);
+                console.log('Template:', EMAILJS_CONFIG.templateId);
+                console.log('To:', email);
+                console.log('Code:', code);
+                
+                const response = await emailjs.send(
+                    EMAILJS_CONFIG.serviceId,
+                    EMAILJS_CONFIG.templateId,
+                    templateParams
+                );
+                
+                console.log('✅ Email enviado via EmailJS:', response);
+                return { success: true, message: 'Email enviado correctamente' };
+            } catch (error) {
+                console.error('❌ Error enviando email:', error);
+                console.error('Detalles:', error.text || error.message);
+                return { 
+                    success: false, 
+                    message: 'Error al enviar el email. El código es: ' + code 
+                };
+            }
+        }
         
         // ============================================
         // FUNCIONES AUXILIARES
@@ -709,19 +712,17 @@ async function sendVerificationEmail(email, code) {
                     verifyBtn.innerHTML = '<i class="fas fa-check"></i> ¡VERIFICADO!';
                     verifyBtn.style.background = 'linear-gradient(135deg, #00cc7a, #00a865)';
                     
-                    // Guardar token y usuario si viene en la respuesta
-                    if (data.token) {
-                        localStorage.setItem('cromwell_token', data.token);
-                    }
+                    // Limpiar localStorage
+                    localStorage.removeItem('verification_email');
+                    localStorage.removeItem('verification_code');
                     
-                    if (data.user) {
-                        localStorage.setItem('cromwell_user', JSON.stringify(data.user));
-                    }
-                    
-                    // Redirigir al dashboard después de 2 segundos
+                    // Redirigir al login después de 2 segundos
                     setTimeout(() => {
-                        window.location.href = 'dashboard.html';
-                    }, 2000);
+                        showStatus('✅ Redirigiendo al login...', 'success');
+                        setTimeout(() => {
+                            window.location.href = 'login.html?verified=true';
+                        }, 1000);
+                    }, 1500);
                 } else {
                     showStatus(`❌ ${data.message}`, 'error');
                     verifyBtn.innerHTML = originalText;
@@ -826,8 +827,9 @@ async function sendVerificationEmail(email, code) {
                     });
                     
                     const data = await response.json();
-                    if (data.success) {
+                    if (data.success && data.user.verified) {
                         window.location.href = 'dashboard.html';
+                        return;
                     }
                 } catch (error) {
                     // Token inválido, continuar con verificación
@@ -847,67 +849,8 @@ async function sendVerificationEmail(email, code) {
                 });
             }
             
-            // Enviar email automáticamente con el código del registro
-const savedCode = localStorage.getItem('verification_code');
-if (savedCode) {
-    showStatus('Enviando código de verificación...', 'info');
-    
-    // Usar el código del registro
-    const emailResult = await sendVerificationEmail(verificationEmail, savedCode);
-    
-    if (emailResult.success) {
-        showStatus('✅ Código enviado. Revisa tu correo.', 'success');
-        verificationCode = savedCode;
-        localStorage.removeItem('verification_code'); // Limpiar después de usar
-    } else {
-        showStatus(`⚠️ ${emailResult.message}`, 'error');
-        // Si falla, pedir nuevo código
-        await requestNewCode();
-    }
-    
-    startResendTimer();
-} else {
-    // Si no hay código guardado, pedir uno nuevo
-    await requestNewCode();
-}
-
-// Función auxiliar para pedir nuevo código
-async function requestNewCode() {
-    showStatus('Solicitando código de verificación...', 'info');
-    
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/resend-code`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ 
-                email: verificationEmail 
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            const emailResult = await sendVerificationEmail(verificationEmail, data.code);
-            
-            if (emailResult.success) {
-                showStatus('✅ Código enviado. Revisa tu correo.', 'success');
-                verificationCode = data.code;
-            } else {
-                showStatus(`⚠️ ${emailResult.message}`, 'error');
-            }
-            
-            startResendTimer();
-        } else {
-            showStatus(`❌ ${data.message}`, 'error');
-        }
-    } catch (error) {
-        console.error('Error solicitando código:', error);
-        showStatus('❌ Error de conexión con el servidor', 'error');
-    }
-}
-            
+            // Enviar email automáticamente al cargar la página
+            await sendInitialVerificationEmail();
             
             // Autofocus en el primer input
             setTimeout(() => {
@@ -915,7 +858,97 @@ async function requestNewCode() {
             }, 500);
         });
         
-        // Permitir Enter para verificar
+        // ============================================
+        // FUNCIÓN PARA ENVIAR EMAIL INICIAL
+        // ============================================
+        async function sendInitialVerificationEmail() {
+            showStatus('Preparando envío de código...', 'info');
+            
+            // Verificar si tenemos un código guardado del registro
+            const savedCode = localStorage.getItem('verification_code');
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlCode = urlParams.get('code');
+            
+            if (savedCode) {
+                // Usar el código del registro
+                showStatus('Enviando código de verificación...', 'info');
+                
+                const emailResult = await sendVerificationEmail(verificationEmail, savedCode);
+                
+                if (emailResult.success) {
+                    showStatus('✅ Código enviado. Revisa tu correo.', 'success');
+                    verificationCode = savedCode;
+                    localStorage.removeItem('verification_code'); // Limpiar después de usar
+                } else {
+                    showStatus(`⚠️ ${emailResult.message}`, 'error');
+                    // Si falla, pedir nuevo código
+                    await requestNewCode();
+                }
+                
+                startResendTimer();
+            } else if (urlCode && urlCode.length === 6) {
+                // Usar código de la URL
+                showStatus('Enviando código de verificación...', 'info');
+                
+                const emailResult = await sendVerificationEmail(verificationEmail, urlCode);
+                
+                if (emailResult.success) {
+                    showStatus('✅ Código enviado. Revisa tu correo.', 'success');
+                    verificationCode = urlCode;
+                } else {
+                    showStatus(`⚠️ ${emailResult.message}`, 'error');
+                    await requestNewCode();
+                }
+                
+                startResendTimer();
+            } else {
+                // No hay código, pedir uno nuevo
+                await requestNewCode();
+            }
+        }
+        
+        // ============================================
+        // FUNCIÓN PARA PEDIR NUEVO CÓDIGO
+        // ============================================
+        async function requestNewCode() {
+            showStatus('Solicitando código de verificación...', 'info');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/resend-code`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email: verificationEmail 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    const emailResult = await sendVerificationEmail(verificationEmail, data.code);
+                    
+                    if (emailResult.success) {
+                        showStatus('✅ Código enviado. Revisa tu correo.', 'success');
+                        verificationCode = data.code;
+                    } else {
+                        showStatus(`⚠️ ${emailResult.message}`, 'error');
+                    }
+                    
+                    startResendTimer();
+                } else {
+                    showStatus(`❌ ${data.message}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error solicitando código:', error);
+                showStatus('❌ Error de conexión con el servidor', 'error');
+            }
+        }
+        
+        // ============================================
+        // MEJORAS DE USABILIDAD
+        // ============================================
         document.addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 const verifyBtn = document.getElementById('verifyBtn');
@@ -924,6 +957,17 @@ async function requestNewCode() {
                 }
             }
         });
+        
+        // Añadir animación CSS para shake
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes shake {
+                0%, 100% { transform: translateX(0); }
+                10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+                20%, 40%, 60%, 80% { transform: translateX(5px); }
+            }
+        `;
+        document.head.appendChild(style);
         
         console.log('✅ Página de verificación cargada');
     </script>
