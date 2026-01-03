@@ -511,54 +511,58 @@
         let resendTimer = null;
         let countdown = 60;
         
-        // Configuración EmailJS (REEMPLAZA CON TUS DATOS)
-        const EMAILJS_CONFIG = {
-            serviceId: 'service_6r3dv87', // Reemplaza con tu Service ID
-            templateId: 'template_kwaxs1k', // Reemplaza con tu Template ID
-            userId: 'x178cSs_4rFkpOn-B' // Reemplaza con tu Public Key/User ID
+        // ============================================
+// CONFIGURACIÓN EMAILJS
+// ============================================
+const EMAILJS_CONFIG = {
+    serviceId: 'service_6r3dv87',
+    templateId: 'plantilla_kwaxs1k', // Cambié a tu template ID español
+    userId: 'x178cSs_4rFkpOn-B'
+};
+
+// Inicializar EmailJS
+(function() {
+    emailjs.init(EMAILJS_CONFIG.userId);
+    console.log('✅ EmailJS inicializado con template:', EMAILJS_CONFIG.templateId);
+})();
+
+// Función para enviar email con EmailJS
+async function sendVerificationEmail(email, code) {
+    try {
+        const templateParams = {
+            to_email: email,
+            from_name: 'Cromwell Pay',
+            reply_to: 'cromwellpayclient@gmail.com',
+            code: code,
+            user_email: email,
+            verification_code: code,
+            verification_link: `${window.location.origin}/verify-email.html?email=${encodeURIComponent(email)}`,
+            site_name: 'Cromwell Pay',
+            current_year: new Date().getFullYear()
         };
         
-        // ============================================
-        // INICIALIZACIÓN EMAILJS
-        // ============================================
-        (function() {
-            emailjs.init(EMAILJS_CONFIG.userId);
-            console.log('✅ EmailJS inicializado');
-        })();
+        console.log('📤 Enviando email con EmailJS...');
+        console.log('Service:', EMAILJS_CONFIG.serviceId);
+        console.log('Template:', EMAILJS_CONFIG.templateId);
+        console.log('To:', email);
+        console.log('Code:', code);
         
-        // ============================================
-        // FUNCIONES DE EMAILJS
-        // ============================================
-        async function sendVerificationEmail(email, code) {
-            try {
-                const templateParams = {
-                    to_email: email,
-                    from_name: 'Cromwell Pay',
-                    reply_to: 'cromwellpayclient@gmail.com',
-                    code: code,
-                    user_email: email,
-                    verification_code: code,
-                    verification_link: `${window.location.origin}/verify-email.html?email=${encodeURIComponent(email)}`,
-                    site_name: 'Cromwell Pay',
-                    current_year: new Date().getFullYear()
-                };
-                
-                const response = await emailjs.send(
-                    EMAILJS_CONFIG.serviceId,
-                    EMAILJS_CONFIG.templateId,
-                    templateParams
-                );
-                
-                console.log('✅ Email enviado via EmailJS:', response);
-                return { success: true };
-            } catch (error) {
-                console.error('❌ Error enviando email:', error);
-                return { 
-                    success: false, 
-                    message: 'Error al enviar el email. El código es: ' + code 
-                };
-            }
-        }
+        const response = await emailjs.send(
+            EMAILJS_CONFIG.serviceId,
+            EMAILJS_CONFIG.templateId,
+            templateParams
+        );
+        
+        console.log('✅ Email enviado via EmailJS:', response);
+        return { success: true, message: 'Email enviado correctamente' };
+    } catch (error) {
+        console.error('❌ Error enviando email:', error);
+        return { 
+            success: false, 
+            message: 'Error al enviar el email. Código: ' + code 
+        };
+    }
+}
         
         // ============================================
         // FUNCIONES AUXILIARES
@@ -843,48 +847,67 @@
                 });
             }
             
-            // Enviar email automáticamente si es la primera vez
-            const emailAlreadySent = localStorage.getItem(`email_sent_${verificationEmail}`);
-            if (!emailAlreadySent) {
-                showStatus('Enviando código de verificación...', 'info');
-                
-                try {
-                    // Solicitar código al servidor
-                    const response = await fetch(`${API_BASE_URL}/api/resend-code`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ 
-                            email: verificationEmail 
-                        })
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                        // Enviar email con EmailJS
-                        const emailResult = await sendVerificationEmail(verificationEmail, data.code);
-                        
-                        if (emailResult.success) {
-                            showStatus('✅ Código enviado. Revisa tu correo.', 'success');
-                            verificationCode = data.code;
-                            localStorage.setItem(`email_sent_${verificationEmail}`, 'true');
-                        } else {
-                            showStatus(`⚠️ ${emailResult.message}`, 'error');
-                        }
-                        
-                        startResendTimer();
-                    } else {
-                        showStatus(`❌ ${data.message}`, 'error');
-                    }
-                } catch (error) {
-                    console.error('Error enviando email inicial:', error);
-                    showStatus('⚠️ No se pudo enviar el email. Usa el botón "Reenviar código".', 'error');
-                }
+            // Enviar email automáticamente con el código del registro
+const savedCode = localStorage.getItem('verification_code');
+if (savedCode) {
+    showStatus('Enviando código de verificación...', 'info');
+    
+    // Usar el código del registro
+    const emailResult = await sendVerificationEmail(verificationEmail, savedCode);
+    
+    if (emailResult.success) {
+        showStatus('✅ Código enviado. Revisa tu correo.', 'success');
+        verificationCode = savedCode;
+        localStorage.removeItem('verification_code'); // Limpiar después de usar
+    } else {
+        showStatus(`⚠️ ${emailResult.message}`, 'error');
+        // Si falla, pedir nuevo código
+        await requestNewCode();
+    }
+    
+    startResendTimer();
+} else {
+    // Si no hay código guardado, pedir uno nuevo
+    await requestNewCode();
+}
+
+// Función auxiliar para pedir nuevo código
+async function requestNewCode() {
+    showStatus('Solicitando código de verificación...', 'info');
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/resend-code`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+                email: verificationEmail 
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const emailResult = await sendVerificationEmail(verificationEmail, data.code);
+            
+            if (emailResult.success) {
+                showStatus('✅ Código enviado. Revisa tu correo.', 'success');
+                verificationCode = data.code;
             } else {
-                startResendTimer();
+                showStatus(`⚠️ ${emailResult.message}`, 'error');
             }
+            
+            startResendTimer();
+        } else {
+            showStatus(`❌ ${data.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error solicitando código:', error);
+        showStatus('❌ Error de conexión con el servidor', 'error');
+    }
+}
+            
             
             // Autofocus en el primer input
             setTimeout(() => {
