@@ -17,9 +17,6 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// JWT Secret para tus propios tokens (opcional)
-const JWT_SECRET = process.env.JWT_SECRET || 'supabase-jwt-secret';
-
 // ========== MIDDLEWARE ==========
 const verificarUsuarioSupabase = async (req, res, next) => {
     const token = req.headers['authorization']?.split(' ')[1];
@@ -62,13 +59,11 @@ function generarCodigoVerificacion() {
 // Función para verificar si una tabla existe
 async function tablaExiste(nombreTabla) {
     try {
-        // Intentar seleccionar un registro (si la tabla no existe, dará error)
         const { error } = await supabase
             .from(nombreTabla)
             .select('*')
             .limit(1);
         
-        // Si no hay error, la tabla existe
         return !error;
     } catch (e) {
         return false;
@@ -80,18 +75,17 @@ async function tablaExiste(nombreTabla) {
 // 1. Estado del servidor
 app.get('/api/status', async (req, res) => {
     try {
-        // Verificar conexión con Supabase
         const { data, error } = await supabase.auth.getUser();
         
-        // Verificar si existe la tabla de códigos
         const tablaCodigosExiste = await tablaExiste('email_verification_codes');
         
         res.json({ 
             success: true, 
             status: '✅ Cromwell Pay con Sistema de Verificación',
             auth: 'Supabase conectado',
-            tabla_codigos: tablaCodigosExiste ? '✅ Existe' : '❌ No existe - CREAR MANUALMENTE',
-            timestamp: new Date().toISOString()
+            tabla_codigos: tablaCodigosExiste ? '✅ Existe' : '❌ No existe',
+            timestamp: new Date().toISOString(),
+            instrucciones: tablaCodigosExiste ? 'EmailJS configurado en frontend' : 'CREAR TABLA MANUALMENTE en Supabase SQL Editor'
         });
     } catch (error) {
         res.json({ 
@@ -123,8 +117,8 @@ app.post('/api/register', async (req, res) => {
         }
         
         // Verificar si el email ya existe
-        const { data: existingUsers } = await supabase.auth.admin.listUsers();
-        const userExists = existingUsers.users.find(u => u.email === email.toLowerCase());
+        const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
+        const userExists = users.find(u => u.email === email.toLowerCase());
         
         if (userExists) {
             return res.status(400).json({ 
@@ -139,12 +133,12 @@ app.post('/api/register', async (req, res) => {
             console.error('❌ Tabla email_verification_codes no existe');
             return res.status(500).json({ 
                 success: false, 
-                message: 'Error del sistema. La tabla de verificación no está configurada.',
-                instrucciones: 'Por favor crea la tabla manualmente en Supabase con el SQL proporcionado.'
+                message: 'Sistema de verificación no configurado. Contacta al administrador.',
+                details: 'La tabla email_verification_codes no existe en la base de datos'
             });
         }
         
-        // Crear usuario en Supabase PERO sin verificación automática
+        // Crear usuario en Supabase SIN verificación automática
         const { data: authData, error: authError } = await supabase.auth.signUp({
             email: email.toLowerCase(),
             password: password,
@@ -175,28 +169,34 @@ app.post('/api/register', async (req, res) => {
         // Generar código de verificación
         const verificationCode = generarCodigoVerificacion();
         
+        // Calcular fecha de expiración (15 minutos desde ahora)
+        const expiresAt = new Date();
+        expiresAt.setMinutes(expiresAt.getMinutes() + 15);
+        
         // Guardar el código en la base de datos
         const { error: dbError } = await supabase
             .from('email_verification_codes')
             .insert([
                 {
                     email: email.toLowerCase(),
-                    code: verificationCode
+                    code: verificationCode,
+                    expires_at: expiresAt.toISOString(),
+                    used: false
                 }
             ]);
         
         if (dbError) {
             console.error('❌ Error al guardar código:', dbError);
             
-            // Eliminar el usuario creado si falla
+            // Intentar eliminar el usuario creado si falla
             if (authData.user?.id) {
                 await supabase.auth.admin.deleteUser(authData.user.id);
             }
             
             return res.status(500).json({ 
                 success: false, 
-                message: 'Error al guardar el código de verificación',
-                detalle: 'La tabla existe pero hubo un error al insertar'
+                message: 'Error al generar el código de verificación',
+                detail: dbError.message
             });
         }
         
@@ -209,13 +209,14 @@ app.post('/api/register', async (req, res) => {
             success: true,
             message: 'Registro exitoso. Redirigiendo a verificación...',
             email: email,
-            code: verificationCode, // Solo para desarrollo/testing
+            code: verificationCode, // SOLO PARA DESARROLLO/TESTING
             needsVerification: true,
             user: {
                 id: authData.user?.id,
                 email: authData.user?.email,
                 user_id: authData.user?.user_metadata?.user_id
-            }
+            },
+            note: 'El código debe ser enviado por EmailJS desde el frontend'
         });
         
     } catch (error) {
@@ -253,7 +254,7 @@ app.post('/api/login', async (req, res) => {
             const targetUser = users.find(u => u.email === email.toLowerCase());
             
             if (targetUser && !targetUser.user_metadata?.email_verified) {
-                return res.json({
+                return res.status(400).json({
                     success: false,
                     needsVerification: true,
                     message: 'Por favor verifica tu email antes de iniciar sesión',
@@ -269,7 +270,7 @@ app.post('/api/login', async (req, res) => {
         
         // Verificar si el email está confirmado
         if (!data.user?.user_metadata?.email_verified) {
-            return res.json({
+            return res.status(400).json({
                 success: false,
                 needsVerification: true,
                 message: 'Por favor verifica tu email antes de iniciar sesión',
@@ -339,6 +340,7 @@ app.post('/api/verify-code', async (req, res) => {
             .limit(1);
         
         if (fetchError) {
+            console.error('❌ Error buscando código:', fetchError);
             throw fetchError;
         }
         
@@ -359,6 +361,7 @@ app.post('/api/verify-code', async (req, res) => {
         const { data: { users }, error: userError } = await supabase.auth.admin.listUsers();
         
         if (userError) {
+            console.error('❌ Error buscando usuario:', userError);
             throw userError;
         }
         
@@ -384,21 +387,23 @@ app.post('/api/verify-code', async (req, res) => {
         );
         
         if (updateError) {
+            console.error('❌ Error actualizando usuario:', updateError);
             throw updateError;
         }
         
-        // Crear una sesión para el usuario
-        // Nota: Para esto necesitamos generar un token manualmente o hacer login
+        // Crear una sesión para el usuario automáticamente después de verificación
         const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
             email: email.toLowerCase(),
-            password: 'temp_password' // Necesitas manejar esto diferente
+            password: req.body.password // Necesitaríamos la contraseña aquí
         });
         
-        // En lugar de lo anterior, retornaremos que fue exitoso y el frontend hará login
+        // En lugar de intentar login automático, simplemente confirmamos la verificación
+        // El frontend hará login manualmente
         res.json({
             success: true,
             message: '¡Email verificado exitosamente! Ahora puedes iniciar sesión.',
-            email: email
+            email: email,
+            verified: true
         });
         
     } catch (error) {
@@ -455,14 +460,19 @@ app.post('/api/resend-code', async (req, res) => {
             });
         }
         
-        // Eliminar códigos antiguos
+        // Marcar códigos antiguos como expirados
         await supabase
             .from('email_verification_codes')
-            .delete()
-            .eq('email', email.toLowerCase());
+            .update({ used: true })
+            .eq('email', email.toLowerCase())
+            .eq('used', false);
         
         // Generar nuevo código
         const verificationCode = generarCodigoVerificacion();
+        
+        // Calcular fecha de expiración (15 minutos desde ahora)
+        const expiresAt = new Date();
+        expiresAt.setMinutes(expiresAt.getMinutes() + 15);
         
         // Guardar nuevo código
         const { error: dbError } = await supabase
@@ -470,7 +480,9 @@ app.post('/api/resend-code', async (req, res) => {
             .insert([
                 {
                     email: email.toLowerCase(),
-                    code: verificationCode
+                    code: verificationCode,
+                    expires_at: expiresAt.toISOString(),
+                    used: false
                 }
             ]);
         
@@ -497,7 +509,6 @@ app.post('/api/resend-code', async (req, res) => {
 // 6. VERIFICAR TOKEN
 app.get('/api/verify-token', verificarUsuarioSupabase, async (req, res) => {
     try {
-        // Obtener metadata del usuario
         const { data: { user } } = await supabase.auth.getUser(req.user.id);
         
         res.json({
@@ -751,17 +762,13 @@ app.get('/verify-email.html', (req, res) => {
 app.get('/api/check-tables', async (req, res) => {
     try {
         const tablaCodigosExiste = await tablaExiste('email_verification_codes');
-        const tablaNotificacionesExiste = await tablaExiste('notifications');
-        const tablaAuditLogsExiste = await tablaExiste('audit_logs');
         
         res.json({
             success: true,
             tables: {
-                email_verification_codes: tablaCodigosExiste,
-                notifications: tablaNotificacionesExiste,
-                audit_logs: tablaAuditLogsExiste
+                email_verification_codes: tablaCodigosExiste
             },
-            instructions: !tablaCodigosExiste ? 'CREATE TABLE email_verification_codes manually in Supabase SQL Editor' : 'All tables exist'
+            instructions: !tablaCodigosExiste ? 'CREATE TABLE email_verification_codes manually in Supabase SQL Editor' : 'Table exists - EmailJS configured in frontend'
         });
     } catch (error) {
         res.json({
@@ -769,6 +776,36 @@ app.get('/api/check-tables', async (req, res) => {
             error: error.message
         });
     }
+});
+
+// ========== SQL PARA CREAR LA TABLA ==========
+app.get('/api/create-tables-sql', (req, res) => {
+    const sql = `
+-- Crear tabla para códigos de verificación de email
+CREATE TABLE IF NOT EXISTS email_verification_codes (
+    id BIGSERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    code VARCHAR(6) NOT NULL,
+    used BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+-- Crear índice para búsquedas por email
+CREATE INDEX IF NOT EXISTS idx_email_verification_codes_email 
+ON email_verification_codes(email);
+
+-- Crear índice para códigos no expirados
+CREATE INDEX IF NOT EXISTS idx_email_verification_codes_active 
+ON email_verification_codes(email, used, expires_at) 
+WHERE used = false AND expires_at > NOW();
+    `;
+    
+    res.json({
+        success: true,
+        sql: sql,
+        instructions: 'Copy and paste this SQL in Supabase SQL Editor and run it'
+    });
 });
 
 // ========== INICIAR SERVIDOR ==========
@@ -782,17 +819,22 @@ app.listen(PORT, async () => {
     
     if (tablaCodigosExiste) {
         console.log('✅ Tabla email_verification_codes: EXISTE');
+        console.log('\n📧 SISTEMA DE VERIFICACIÓN CONFIGURADO:');
+        console.log('   • EmailJS para envío de emails (frontend)');
+        console.log('   • Códigos de 6 dígitos generados en backend');
+        console.log('   • Verificación contra base de datos');
     } else {
         console.log('❌ Tabla email_verification_codes: NO EXISTE');
         console.log('\n📋 INSTRUCCIONES PARA CREAR LA TABLA:');
         console.log('1. Ve a Supabase Dashboard -> SQL Editor');
-        console.log('2. Copia y pega el SQL de creación de tablas');
-        console.log('3. Haz clic en "Run"');
-        console.log('4. Reinicia este servidor');
+        console.log('2. Visita http://localhost:' + PORT + '/api/create-tables-sql para obtener el SQL');
+        console.log('3. Copia y pega el SQL en el editor');
+        console.log('4. Haz clic en "Run"');
+        console.log('5. Reinicia este servidor');
     }
     
     console.log('\n✅ SISTEMA LISTO:');
-    console.log('   • Verificación por código de 6 dígitos');
-    console.log('   • EmailJS para envío de emails');
-    console.log('   • Dashboard de administración');
+    console.log('   • Frontend: EmailJS configurado con tus credenciales');
+    console.log('   • Backend: Generación y verificación de códigos');
+    console.log('   • Dashboard: Sistema de administración completo');
 });
