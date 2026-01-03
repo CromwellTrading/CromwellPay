@@ -12,58 +12,32 @@ app.use(express.json());
 app.use(express.static('public'));
 app.use(express.static('.'));
 
-// Supabase Client (con auth)
+// Supabase Client (con auth) - DESACTIVAR EMAILS AUTOMÁTICOS
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-// ========== MIDDLEWARE ==========
-const verificarUsuarioSupabase = async (req, res, next) => {
-    const token = req.headers['authorization']?.split(' ')[1];
-    
-    if (!token) {
-        return res.status(401).json({ 
-            success: false, 
-            message: 'Token requerido' 
-        });
+const supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+        // DESACTIVAR EMAILS DE SUPABASE
+        disableSignup: false,
+        flowType: 'implicit'
     }
-    
-    try {
-        // Verificar token con Supabase
-        const { data: { user }, error } = await supabase.auth.getUser(token);
-        
-        if (error || !user) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token inválido' 
-            });
-        }
-        
-        req.user = user;
-        next();
-    } catch (error) {
-        return res.status(403).json({ 
-            success: false, 
-            message: 'Error de autenticación' 
-        });
-    }
-};
+});
 
 // ========== FUNCIONES AUXILIARES ==========
 
-// Función para generar código de verificación
 function generarCodigoVerificacion() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Función para verificar si una tabla existe
 async function tablaExiste(nombreTabla) {
     try {
         const { error } = await supabase
             .from(nombreTabla)
             .select('*')
             .limit(1);
-        
         return !error;
     } catch (e) {
         return false;
@@ -76,32 +50,28 @@ async function tablaExiste(nombreTabla) {
 app.get('/api/status', async (req, res) => {
     try {
         const { data, error } = await supabase.auth.getUser();
-        
         const tablaCodigosExiste = await tablaExiste('email_verification_codes');
         
         res.json({ 
             success: true, 
-            status: '✅ Cromwell Pay con Sistema de Verificación',
-            auth: 'Supabase conectado',
+            status: '✅ Cromwell Pay - EmailJS ONLY',
+            auth: 'Supabase conectado (emails DESACTIVADOS)',
             tabla_codigos: tablaCodigosExiste ? '✅ Existe' : '❌ No existe',
-            timestamp: new Date().toISOString(),
-            instrucciones: tablaCodigosExiste ? 'EmailJS configurado en frontend' : 'CREAR TABLA MANUALMENTE en Supabase SQL Editor'
+            timestamp: new Date().toISOString()
         });
     } catch (error) {
-        res.json({ 
+        res.status(500).json({ 
             success: false, 
-            status: '⚠️ Error verificando estado',
             error: error.message 
         });
     }
 });
 
-// 2. REGISTRO con verificación por código
+// 2. REGISTRO - SIN EMAIL AUTOMÁTICO DE SUPABASE
 app.post('/api/register', async (req, res) => {
     try {
         const { email, password, termsAccepted } = req.body;
         
-        // Validaciones básicas
         if (!email || !password) {
             return res.status(400).json({ 
                 success: false, 
@@ -117,7 +87,7 @@ app.post('/api/register', async (req, res) => {
         }
         
         // Verificar si el email ya existe
-        const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
+        const { data: { users } } = await supabase.auth.admin.listUsers();
         const userExists = users.find(u => u.email === email.toLowerCase());
         
         if (userExists) {
@@ -127,39 +97,37 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Verificar si la tabla de códigos existe
+        // Verificar tabla de códigos
         const tablaCodigosExiste = await tablaExiste('email_verification_codes');
         if (!tablaCodigosExiste) {
-            console.error('❌ Tabla email_verification_codes no existe');
             return res.status(500).json({ 
                 success: false, 
-                message: 'Sistema de verificación no configurado. Contacta al administrador.',
-                details: 'La tabla email_verification_codes no existe en la base de datos'
+                message: 'Sistema de verificación no configurado',
+                instruction: 'CREATE TABLE email_verification_codes en Supabase SQL Editor'
             });
         }
         
-        // Crear usuario en Supabase SIN verificación automática
-        const { data: authData, error: authError } = await supabase.auth.signUp({
+        // Crear usuario SIN verificación automática
+        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
             email: email.toLowerCase(),
             password: password,
-            options: {
-                data: {
-                    nickname: email.split('@')[0],
-                    user_id: 'CROM-' + Date.now().toString().slice(-6),
-                    cwt: 0,
-                    cws: 0,
-                    role: 'user',
-                    phone: '',
-                    province: '',
-                    wallet: '',
-                    notifications: true,
-                    email_verified: false // Marcamos que el email no está verificado
-                }
+            email_confirm: false, // NO confirmar email automáticamente
+            user_metadata: {
+                nickname: email.split('@')[0],
+                user_id: 'CROM-' + Date.now().toString().slice(-6),
+                cwt: 0,
+                cws: 0,
+                role: 'user',
+                phone: '',
+                province: '',
+                wallet: '',
+                notifications: true,
+                email_verified: false
             }
         });
         
         if (authError) {
-            console.error('❌ Error en registro Supabase:', authError.message);
+            console.error('❌ Error creando usuario:', authError.message);
             return res.status(400).json({ 
                 success: false, 
                 message: authError.message 
@@ -169,11 +137,10 @@ app.post('/api/register', async (req, res) => {
         // Generar código de verificación
         const verificationCode = generarCodigoVerificacion();
         
-        // Calcular fecha de expiración (15 minutos desde ahora)
+        // Guardar código en la base de datos
         const expiresAt = new Date();
         expiresAt.setMinutes(expiresAt.getMinutes() + 15);
         
-        // Guardar el código en la base de datos
         const { error: dbError } = await supabase
             .from('email_verification_codes')
             .insert([
@@ -186,37 +153,32 @@ app.post('/api/register', async (req, res) => {
             ]);
         
         if (dbError) {
-            console.error('❌ Error al guardar código:', dbError);
-            
-            // Intentar eliminar el usuario creado si falla
+            console.error('❌ Error guardando código:', dbError);
+            // Intentar eliminar usuario si falla
             if (authData.user?.id) {
                 await supabase.auth.admin.deleteUser(authData.user.id);
             }
-            
             return res.status(500).json({ 
                 success: false, 
-                message: 'Error al generar el código de verificación',
-                detail: dbError.message
+                message: 'Error al generar código de verificación' 
             });
         }
         
-        // Enviar respuesta exitosa
         console.log(`✅ Usuario registrado: ${email}`);
-        console.log(`📧 Código generado: ${verificationCode}`);
-        console.log('📤 Email será enviado desde el frontend usando EmailJS');
+        console.log(`📧 Código generado para EmailJS: ${verificationCode}`);
         
         res.json({
             success: true,
             message: 'Registro exitoso. Redirigiendo a verificación...',
             email: email,
-            code: verificationCode, // SOLO PARA DESARROLLO/TESTING
+            code: verificationCode, // Para que el frontend lo envíe con EmailJS
             needsVerification: true,
             user: {
                 id: authData.user?.id,
                 email: authData.user?.email,
                 user_id: authData.user?.user_metadata?.user_id
             },
-            note: 'El código debe ser enviado por EmailJS desde el frontend'
+            note: 'El frontend ENVIARÁ el código con EmailJS'
         });
         
     } catch (error) {
@@ -228,7 +190,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// 3. LOGIN con verificación de email
+// 3. LOGIN - Solo usuarios verificados
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -240,7 +202,7 @@ app.post('/api/login', async (req, res) => {
             });
         }
         
-        // Primero intentar login normal
+        // Intentar login
         const { data, error } = await supabase.auth.signInWithPassword({
             email: email.toLowerCase(),
             password: password
@@ -254,42 +216,42 @@ app.post('/api/login', async (req, res) => {
             const targetUser = users.find(u => u.email === email.toLowerCase());
             
             if (targetUser && !targetUser.user_metadata?.email_verified) {
-                return res.status(400).json({
+                return res.json({
                     success: false,
                     needsVerification: true,
-                    message: 'Por favor verifica tu email antes de iniciar sesión',
+                    message: 'Por favor verifica tu email primero',
                     email: email
                 });
             }
             
             return res.status(401).json({ 
                 success: false, 
-                message: 'Email o contraseña incorrectos' 
+                message: 'Credenciales incorrectas' 
             });
         }
         
         // Verificar si el email está confirmado
         if (!data.user?.user_metadata?.email_verified) {
-            return res.status(400).json({
+            return res.json({
                 success: false,
                 needsVerification: true,
-                message: 'Por favor verifica tu email antes de iniciar sesión',
+                message: 'Por favor verifica tu email primero',
                 email: email
             });
         }
         
-        // ÉXITO: Usuario verificado y autenticado
+        // ÉXITO
         res.json({
             success: true,
             message: 'Inicio de sesión exitoso',
-            token: data.session?.access_token,
+            token: data.session.access_token,
             user: {
                 id: data.user.id,
                 email: data.user.email,
-                user_id: data.user.user_metadata?.user_id || 'CROM-' + data.user.id.slice(0, 8),
+                user_id: data.user.user_metadata?.user_id,
                 nickname: data.user.user_metadata?.nickname || email.split('@')[0],
                 role: data.user.user_metadata?.role || 'user',
-                verified: !!data.user.user_metadata?.email_verified,
+                verified: true,
                 cwt: data.user.user_metadata?.cwt || 0,
                 cws: data.user.user_metadata?.cws || 0,
                 phone: data.user.user_metadata?.phone || '',
@@ -308,7 +270,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 4. VERIFICAR CÓDIGO DE EMAIL
+// 4. VERIFICAR CÓDIGO
 app.post('/api/verify-code', async (req, res) => {
     try {
         const { email, code } = req.body;
@@ -320,16 +282,7 @@ app.post('/api/verify-code', async (req, res) => {
             });
         }
         
-        // Verificar si la tabla existe
-        const tablaCodigosExiste = await tablaExiste('email_verification_codes');
-        if (!tablaCodigosExiste) {
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Sistema de verificación no configurado correctamente' 
-            });
-        }
-        
-        // Buscar el código en la base de datos
+        // Buscar código válido
         const { data: codes, error: fetchError } = await supabase
             .from('email_verification_codes')
             .select('*')
@@ -339,32 +292,21 @@ app.post('/api/verify-code', async (req, res) => {
             .gt('expires_at', new Date().toISOString())
             .limit(1);
         
-        if (fetchError) {
-            console.error('❌ Error buscando código:', fetchError);
-            throw fetchError;
-        }
-        
-        if (!codes || codes.length === 0) {
+        if (fetchError || !codes || codes.length === 0) {
             return res.status(400).json({ 
                 success: false, 
                 message: 'Código inválido o expirado' 
             });
         }
         
-        // Marcar el código como usado
+        // Marcar código como usado
         await supabase
             .from('email_verification_codes')
             .update({ used: true })
             .eq('id', codes[0].id);
         
-        // Buscar el usuario en Supabase
-        const { data: { users }, error: userError } = await supabase.auth.admin.listUsers();
-        
-        if (userError) {
-            console.error('❌ Error buscando usuario:', userError);
-            throw userError;
-        }
-        
+        // Buscar usuario
+        const { data: { users } } = await supabase.auth.admin.listUsers();
         const targetUser = users.find(u => u.email === email.toLowerCase());
         
         if (!targetUser) {
@@ -374,7 +316,7 @@ app.post('/api/verify-code', async (req, res) => {
             });
         }
         
-        // Actualizar el usuario para marcar el email como verificado
+        // Actualizar usuario como verificado
         const { error: updateError } = await supabase.auth.admin.updateUserById(
             targetUser.id,
             {
@@ -387,27 +329,18 @@ app.post('/api/verify-code', async (req, res) => {
         );
         
         if (updateError) {
-            console.error('❌ Error actualizando usuario:', updateError);
             throw updateError;
         }
         
-        // Crear una sesión para el usuario automáticamente después de verificación
-        const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
-            email: email.toLowerCase(),
-            password: req.body.password // Necesitaríamos la contraseña aquí
-        });
-        
-        // En lugar de intentar login automático, simplemente confirmamos la verificación
-        // El frontend hará login manualmente
         res.json({
             success: true,
-            message: '¡Email verificado exitosamente! Ahora puedes iniciar sesión.',
+            message: '¡Email verificado exitosamente!',
             email: email,
             verified: true
         });
         
     } catch (error) {
-        console.error('❌ Error al verificar código:', error);
+        console.error('❌ Error verificando código:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -415,7 +348,7 @@ app.post('/api/verify-code', async (req, res) => {
     }
 });
 
-// 5. REENVIAR código de verificación
+// 5. REENVIAR CÓDIGO
 app.post('/api/resend-code', async (req, res) => {
     try {
         const { email } = req.body;
@@ -427,22 +360,8 @@ app.post('/api/resend-code', async (req, res) => {
             });
         }
         
-        // Verificar si la tabla existe
-        const tablaCodigosExiste = await tablaExiste('email_verification_codes');
-        if (!tablaCodigosExiste) {
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Sistema de verificación no configurado correctamente' 
-            });
-        }
-        
-        // Verificar si el usuario existe
-        const { data: { users }, error: userError } = await supabase.auth.admin.listUsers();
-        
-        if (userError) {
-            throw userError;
-        }
-        
+        // Verificar usuario
+        const { data: { users } } = await supabase.auth.admin.listUsers();
         const targetUser = users.find(u => u.email === email.toLowerCase());
         
         if (!targetUser) {
@@ -452,7 +371,6 @@ app.post('/api/resend-code', async (req, res) => {
             });
         }
         
-        // Verificar si ya está verificado
         if (targetUser.user_metadata?.email_verified) {
             return res.status(400).json({ 
                 success: false, 
@@ -460,7 +378,7 @@ app.post('/api/resend-code', async (req, res) => {
             });
         }
         
-        // Marcar códigos antiguos como expirados
+        // Marcar códigos anteriores como expirados
         await supabase
             .from('email_verification_codes')
             .update({ used: true })
@@ -470,7 +388,6 @@ app.post('/api/resend-code', async (req, res) => {
         // Generar nuevo código
         const verificationCode = generarCodigoVerificacion();
         
-        // Calcular fecha de expiración (15 minutos desde ahora)
         const expiresAt = new Date();
         expiresAt.setMinutes(expiresAt.getMinutes() + 15);
         
@@ -492,13 +409,13 @@ app.post('/api/resend-code', async (req, res) => {
         
         res.json({
             success: true,
-            message: 'Nuevo código generado. El frontend lo enviará por email.',
+            message: 'Nuevo código generado',
             email: email,
-            code: verificationCode // Solo para desarrollo/testing
+            code: verificationCode // Para que el frontend lo envíe con EmailJS
         });
         
     } catch (error) {
-        console.error('❌ Error al reenviar código:', error);
+        console.error('❌ Error reenviando código:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -507,9 +424,25 @@ app.post('/api/resend-code', async (req, res) => {
 });
 
 // 6. VERIFICAR TOKEN
-app.get('/api/verify-token', verificarUsuarioSupabase, async (req, res) => {
+app.get('/api/verify-token', async (req, res) => {
     try {
-        const { data: { user } } = await supabase.auth.getUser(req.user.id);
+        const token = req.headers['authorization']?.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token requerido' 
+            });
+        }
+        
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        
+        if (error || !user) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token inválido' 
+            });
+        }
         
         res.json({
             success: true,
@@ -528,6 +461,7 @@ app.get('/api/verify-token', verificarUsuarioSupabase, async (req, res) => {
                 notifications: user.user_metadata?.notifications !== false
             }
         });
+        
     } catch (error) {
         res.status(500).json({ 
             success: false, 
@@ -536,10 +470,26 @@ app.get('/api/verify-token', verificarUsuarioSupabase, async (req, res) => {
     }
 });
 
-// 7. DASHBOARD - Obtener datos del usuario
-app.get('/api/dashboard', verificarUsuarioSupabase, async (req, res) => {
+// 7. DASHBOARD
+app.get('/api/dashboard', async (req, res) => {
     try {
-        const { data: { user } } = await supabase.auth.getUser(req.user.id);
+        const token = req.headers['authorization']?.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token requerido' 
+            });
+        }
+        
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        
+        if (error || !user) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token inválido' 
+            });
+        }
         
         res.json({
             success: true,
@@ -558,8 +508,9 @@ app.get('/api/dashboard', verificarUsuarioSupabase, async (req, res) => {
                 notifications: user.user_metadata?.notifications !== false
             }
         });
+        
     } catch (error) {
-        console.error('❌ Error al cargar dashboard:', error);
+        console.error('❌ Error dashboard:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -567,9 +518,27 @@ app.get('/api/dashboard', verificarUsuarioSupabase, async (req, res) => {
     }
 });
 
-// 8. ACTUALIZAR PERFIL del usuario
-app.put('/api/user/profile', verificarUsuarioSupabase, async (req, res) => {
+// 8. ACTUALIZAR PERFIL
+app.put('/api/user/profile', async (req, res) => {
     try {
+        const token = req.headers['authorization']?.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token requerido' 
+            });
+        }
+        
+        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+        
+        if (userError || !user) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token inválido' 
+            });
+        }
+        
         const { nickname, phone, province, wallet, notifications } = req.body;
         
         if (!nickname || !phone || !province) {
@@ -579,7 +548,6 @@ app.put('/api/user/profile', verificarUsuarioSupabase, async (req, res) => {
             });
         }
         
-        // Actualizar metadata del usuario en Supabase Auth
         const { error } = await supabase.auth.updateUser({
             data: {
                 nickname,
@@ -600,7 +568,7 @@ app.put('/api/user/profile', verificarUsuarioSupabase, async (req, res) => {
         });
         
     } catch (error) {
-        console.error('❌ Error al actualizar perfil:', error);
+        console.error('❌ Error actualizando perfil:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -608,8 +576,8 @@ app.put('/api/user/profile', verificarUsuarioSupabase, async (req, res) => {
     }
 });
 
-// 9. CERRAR SESIÓN
-app.post('/api/logout', verificarUsuarioSupabase, async (req, res) => {
+// 9. LOGOUT
+app.post('/api/logout', async (req, res) => {
     try {
         const { error } = await supabase.auth.signOut();
         
@@ -623,7 +591,7 @@ app.post('/api/logout', verificarUsuarioSupabase, async (req, res) => {
         });
         
     } catch (error) {
-        console.error('❌ Error al cerrar sesión:', error);
+        console.error('❌ Error cerrando sesión:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -631,27 +599,35 @@ app.post('/api/logout', verificarUsuarioSupabase, async (req, res) => {
     }
 });
 
-// ========== RUTAS PARA ADMIN ==========
+// ========== ADMIN ROUTES ==========
 
 // 10. OBTENER TODOS LOS USUARIOS (admin)
-app.get('/api/admin/users', verificarUsuarioSupabase, async (req, res) => {
+app.get('/api/admin/users', async (req, res) => {
     try {
-        // Verificar que sea admin
-        if (req.user.user_metadata?.role !== 'admin') {
+        const token = req.headers['authorization']?.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token requerido' 
+            });
+        }
+        
+        const { data: { user } } = await supabase.auth.getUser(token);
+        
+        if (!user || user.user_metadata?.role !== 'admin') {
             return res.status(403).json({ 
                 success: false, 
                 message: 'Acceso denegado' 
             });
         }
         
-        // Obtener todos los usuarios
         const { data: { users }, error } = await supabase.auth.admin.listUsers();
         
         if (error) {
             throw error;
         }
         
-        // Filtrar y formatear usuarios
         const usuariosFormateados = users.map(user => ({
             id: user.id,
             email: user.email,
@@ -672,7 +648,7 @@ app.get('/api/admin/users', verificarUsuarioSupabase, async (req, res) => {
         });
         
     } catch (error) {
-        console.error('❌ Error al obtener usuarios:', error);
+        console.error('❌ Error obteniendo usuarios:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -681,18 +657,28 @@ app.get('/api/admin/users', verificarUsuarioSupabase, async (req, res) => {
 });
 
 // 11. ACTUALIZAR SALDO (admin)
-app.put('/api/admin/users/:userId/balance', verificarUsuarioSupabase, async (req, res) => {
+app.put('/api/admin/users/:userId/balance', async (req, res) => {
     try {
-        const { userId } = req.params;
-        const { cwt, cws, note } = req.body;
+        const token = req.headers['authorization']?.split(' ')[1];
         
-        // Verificar que sea admin
-        if (req.user.user_metadata?.role !== 'admin') {
+        if (!token) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token requerido' 
+            });
+        }
+        
+        const { data: { user } } = await supabase.auth.getUser(token);
+        
+        if (!user || user.user_metadata?.role !== 'admin') {
             return res.status(403).json({ 
                 success: false, 
                 message: 'Acceso denegado' 
             });
         }
+        
+        const { userId } = req.params;
+        const { cwt, cws, note } = req.body;
         
         if (cwt < 0 || cws < 0) {
             return res.status(400).json({ 
@@ -701,22 +687,22 @@ app.put('/api/admin/users/:userId/balance', verificarUsuarioSupabase, async (req
             });
         }
         
-        // Obtener usuario actual para conocer sus balances anteriores
-        const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(userId);
+        // Obtener usuario actual
+        const { data: { user: targetUser }, error: userError } = await supabase.auth.admin.getUserById(userId);
         
-        if (userError || !user) {
+        if (userError || !targetUser) {
             return res.status(404).json({ 
                 success: false, 
                 message: 'Usuario no encontrado' 
             });
         }
         
-        // Actualizar metadata del usuario
+        // Actualizar metadata
         const { error } = await supabase.auth.admin.updateUserById(
             userId,
             {
                 user_metadata: {
-                    ...user.user_metadata,
+                    ...targetUser.user_metadata,
                     cwt: parseFloat(cwt) || 0,
                     cws: parseInt(cws) || 0
                 }
@@ -733,7 +719,7 @@ app.put('/api/admin/users/:userId/balance', verificarUsuarioSupabase, async (req
         });
         
     } catch (error) {
-        console.error('❌ Error al actualizar balance:', error);
+        console.error('❌ Error actualizando balance:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -758,7 +744,7 @@ app.get('/verify-email.html', (req, res) => {
     res.sendFile(__dirname + '/public/verify-email.html');
 });
 
-// Ruta para verificar estado de la tabla
+// Ruta para verificar estado
 app.get('/api/check-tables', async (req, res) => {
     try {
         const tablaCodigosExiste = await tablaExiste('email_verification_codes');
@@ -768,7 +754,7 @@ app.get('/api/check-tables', async (req, res) => {
             tables: {
                 email_verification_codes: tablaCodigosExiste
             },
-            instructions: !tablaCodigosExiste ? 'CREATE TABLE email_verification_codes manually in Supabase SQL Editor' : 'Table exists - EmailJS configured in frontend'
+            instructions: !tablaCodigosExiste ? 'CREATE TABLE email_verification_codes en Supabase SQL Editor' : 'Tabla existe'
         });
     } catch (error) {
         res.json({
@@ -778,10 +764,9 @@ app.get('/api/check-tables', async (req, res) => {
     }
 });
 
-// ========== SQL PARA CREAR LA TABLA ==========
+// SQL para crear tabla
 app.get('/api/create-tables-sql', (req, res) => {
     const sql = `
--- Crear tabla para códigos de verificación de email
 CREATE TABLE IF NOT EXISTS email_verification_codes (
     id BIGSERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL,
@@ -791,11 +776,9 @@ CREATE TABLE IF NOT EXISTS email_verification_codes (
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
--- Crear índice para búsquedas por email
 CREATE INDEX IF NOT EXISTS idx_email_verification_codes_email 
 ON email_verification_codes(email);
 
--- Crear índice para códigos no expirados
 CREATE INDEX IF NOT EXISTS idx_email_verification_codes_active 
 ON email_verification_codes(email, used, expires_at) 
 WHERE used = false AND expires_at > NOW();
@@ -803,38 +786,38 @@ WHERE used = false AND expires_at > NOW();
     
     res.json({
         success: true,
-        sql: sql,
-        instructions: 'Copy and paste this SQL in Supabase SQL Editor and run it'
+        sql: sql
     });
 });
 
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, async () => {
     console.log(`🚀 Cromwell Pay ejecutándose en http://localhost:${PORT}`);
-    console.log(`🔗 URL Supabase: ${supabaseUrl}`);
+    console.log(`🔗 Supabase: ${supabaseUrl}`);
     
-    // Verificar tablas
-    console.log('\n🔍 Verificando tablas...');
+    console.log('\n🔍 Verificando configuración...');
     const tablaCodigosExiste = await tablaExiste('email_verification_codes');
     
     if (tablaCodigosExiste) {
         console.log('✅ Tabla email_verification_codes: EXISTE');
-        console.log('\n📧 SISTEMA DE VERIFICACIÓN CONFIGURADO:');
-        console.log('   • EmailJS para envío de emails (frontend)');
-        console.log('   • Códigos de 6 dígitos generados en backend');
-        console.log('   • Verificación contra base de datos');
+        console.log('\n📧 SISTEMA DE VERIFICACIÓN:');
+        console.log('   • EmailJS: ENVÍA los emails (frontend)');
+        console.log('   • Supabase: NO envía emails (desactivado)');
+        console.log('   • Backend: Solo genera y verifica códigos');
     } else {
         console.log('❌ Tabla email_verification_codes: NO EXISTE');
-        console.log('\n📋 INSTRUCCIONES PARA CREAR LA TABLA:');
-        console.log('1. Ve a Supabase Dashboard -> SQL Editor');
-        console.log('2. Visita http://localhost:' + PORT + '/api/create-tables-sql para obtener el SQL');
-        console.log('3. Copia y pega el SQL en el editor');
-        console.log('4. Haz clic en "Run"');
-        console.log('5. Reinicia este servidor');
+        console.log('\n📋 CREAR TABLA:');
+        console.log('1. Ve a Supabase -> SQL Editor');
+        console.log(`2. Visita http://localhost:${PORT}/api/create-tables-sql`);
+        console.log('3. Copia el SQL y ejecútalo');
+        console.log('4. Reinicia el servidor');
     }
     
-    console.log('\n✅ SISTEMA LISTO:');
-    console.log('   • Frontend: EmailJS configurado con tus credenciales');
-    console.log('   • Backend: Generación y verificación de códigos');
-    console.log('   • Dashboard: Sistema de administración completo');
+    console.log('\n✅ SISTEMA LISTO - EMAILJS SOLO:');
+    console.log('   • Registro: Genera código, frontend envía email');
+    console.log('   • Login: Solo usuarios verificados');
+    console.log('   • Verificación: Códigos de 6 dígitos');
+    console.log('\n⚠️  CONFIGURACIÓN SUPABASE IMPORTANTE:');
+    console.log('   • Desactiva "Confirm email" en Authentication');
+    console.log('   • Desactiva todos los email templates');
 });
