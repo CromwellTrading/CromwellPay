@@ -12,19 +12,10 @@ app.use(express.json());
 app.use(express.static('public'));
 app.use(express.static('.'));
 
-// Supabase Client (con auth) - DESACTIVAR EMAILS AUTOMÁTICOS
+// Supabase Client
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: {
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: true,
-        // DESACTIVAR EMAILS DE SUPABASE
-        disableSignup: false,
-        flowType: 'implicit'
-    }
-});
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ========== FUNCIONES AUXILIARES ==========
 
@@ -32,32 +23,56 @@ function generarCodigoVerificacion() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-async function tablaExiste(nombreTabla) {
-    try {
-        const { error } = await supabase
-            .from(nombreTabla)
-            .select('*')
-            .limit(1);
-        return !error;
-    } catch (e) {
-        return false;
-    }
+function generarIDUsuario() {
+    const fecha = Date.now().toString();
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    return `CROM-${fecha.slice(-6)}${random}`;
 }
 
-// ========== RUTAS DE AUTH ==========
+// ========== MIDDLEWARE DE AUTENTICACIÓN ==========
+const authenticateToken = async (req, res, next) => {
+    try {
+        const token = req.headers['authorization']?.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token de autenticación requerido' 
+            });
+        }
+        
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        
+        if (error || !user) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Token inválido o expirado' 
+            });
+        }
+        
+        req.user = user;
+        next();
+    } catch (error) {
+        console.error('Error en autenticación:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error de autenticación' 
+        });
+    }
+};
+
+// ========== RUTAS PÚBLICAS ==========
 
 // 1. Estado del servidor
 app.get('/api/status', async (req, res) => {
     try {
         const { data, error } = await supabase.auth.getUser();
-        const tablaCodigosExiste = await tablaExiste('email_verification_codes');
         
         res.json({ 
             success: true, 
-            status: '✅ Cromwell Pay - EmailJS ONLY',
-            auth: 'Supabase conectado (emails DESACTIVADOS)',
-            tabla_codigos: tablaCodigosExiste ? '✅ Existe' : '❌ No existe',
-            timestamp: new Date().toISOString()
+            status: '✅ Cromwell Pay - Sistema Funcionando',
+            timestamp: new Date().toISOString(),
+            version: '1.0.0'
         });
     } catch (error) {
         res.status(500).json({ 
@@ -67,7 +82,7 @@ app.get('/api/status', async (req, res) => {
     }
 });
 
-// 2. REGISTRO - SIN EMAIL AUTOMÁTICO DE SUPABASE
+// 2. REGISTRO
 app.post('/api/register', async (req, res) => {
     try {
         const { email, password, termsAccepted } = req.body;
@@ -86,6 +101,13 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
+        if (password.length < 6) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'La contraseña debe tener al menos 6 caracteres' 
+            });
+        }
+        
         // Verificar si el email ya existe
         const { data: { users } } = await supabase.auth.admin.listUsers();
         const userExists = users.find(u => u.email === email.toLowerCase());
@@ -97,32 +119,29 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Verificar tabla de códigos
-        const tablaCodigosExiste = await tablaExiste('email_verification_codes');
-        if (!tablaCodigosExiste) {
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Sistema de verificación no configurado',
-                instruction: 'CREATE TABLE email_verification_codes en Supabase SQL Editor'
-            });
-        }
+        // Generar código de verificación
+        const verificationCode = generarCodigoVerificacion();
+        const userId = generarIDUsuario();
         
-        // Crear usuario SIN verificación automática
+        // Crear usuario con verificación automática
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({
             email: email.toLowerCase(),
             password: password,
-            email_confirm: false, // NO confirmar email automáticamente
+            email_confirm: true,
             user_metadata: {
                 nickname: email.split('@')[0],
-                user_id: 'CROM-' + Date.now().toString().slice(-6),
+                user_id: userId,
                 cwt: 0,
                 cws: 0,
                 role: 'user',
                 phone: '',
                 province: '',
-                wallet: '',
+                wallet_address: '',
                 notifications: true,
-                email_verified: false
+                email_verified: true,
+                verification_code: verificationCode,
+                verified_at: new Date().toISOString(),
+                created_at: new Date().toISOString()
             }
         });
         
@@ -134,51 +153,43 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Generar código de verificación
-        const verificationCode = generarCodigoVerificacion();
+        console.log(`✅ Usuario registrado: ${email} (${userId})`);
+        console.log(`🔢 Código generado: ${verificationCode}`);
         
-        // Guardar código en la base de datos
-        const expiresAt = new Date();
-        expiresAt.setMinutes(expiresAt.getMinutes() + 15);
-        
-        const { error: dbError } = await supabase
-            .from('email_verification_codes')
-            .insert([
-                {
-                    email: email.toLowerCase(),
-                    code: verificationCode,
-                    expires_at: expiresAt.toISOString(),
-                    used: false
-                }
-            ]);
-        
-        if (dbError) {
-            console.error('❌ Error guardando código:', dbError);
-            // Intentar eliminar usuario si falla
-            if (authData.user?.id) {
-                await supabase.auth.admin.deleteUser(authData.user.id);
+        // Crear sesión para el usuario
+        const { data: sessionData, error: sessionError } = await supabase.auth.admin.createSession({
+            user_id: authData.user.id,
+            session_data: {
+                expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
             }
-            return res.status(500).json({ 
-                success: false, 
-                message: 'Error al generar código de verificación' 
-            });
-        }
+        });
         
-        console.log(`✅ Usuario registrado: ${email}`);
-        console.log(`📧 Código generado para EmailJS: ${verificationCode}`);
+        if (sessionError) {
+            console.error('❌ Error creando sesión:', sessionError);
+        }
         
         res.json({
             success: true,
-            message: 'Registro exitoso. Redirigiendo a verificación...',
+            message: 'Registro exitoso. Tu cuenta ha sido creada.',
             email: email,
-            code: verificationCode, // Para que el frontend lo envíe con EmailJS
-            needsVerification: true,
+            verification_code: verificationCode,
+            token: sessionData?.session?.access_token || null,
             user: {
                 id: authData.user?.id,
                 email: authData.user?.email,
-                user_id: authData.user?.user_metadata?.user_id
+                user_id: userId,
+                nickname: email.split('@')[0],
+                role: 'user',
+                verified: true,
+                cwt: 0,
+                cws: 0,
+                phone: '',
+                province: '',
+                wallet_address: '',
+                notifications: true,
+                created_at: new Date().toISOString()
             },
-            note: 'El frontend ENVIARÁ el código con EmailJS'
+            note: 'Guarda este código en un lugar seguro. Te servirá para recuperar tu cuenta.'
         });
         
     } catch (error) {
@@ -190,7 +201,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// 3. LOGIN - Solo usuarios verificados
+// 3. LOGIN
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -210,37 +221,12 @@ app.post('/api/login', async (req, res) => {
         
         if (error) {
             console.error('❌ Error en login:', error.message);
-            
-            // Verificar si el usuario existe pero no está verificado
-            const { data: { users } } = await supabase.auth.admin.listUsers();
-            const targetUser = users.find(u => u.email === email.toLowerCase());
-            
-            if (targetUser && !targetUser.user_metadata?.email_verified) {
-                return res.json({
-                    success: false,
-                    needsVerification: true,
-                    message: 'Por favor verifica tu email primero',
-                    email: email
-                });
-            }
-            
             return res.status(401).json({ 
                 success: false, 
                 message: 'Credenciales incorrectas' 
             });
         }
         
-        // Verificar si el email está confirmado
-        if (!data.user?.user_metadata?.email_verified) {
-            return res.json({
-                success: false,
-                needsVerification: true,
-                message: 'Por favor verifica tu email primero',
-                email: email
-            });
-        }
-        
-        // ÉXITO
         res.json({
             success: true,
             message: 'Inicio de sesión exitoso',
@@ -248,7 +234,7 @@ app.post('/api/login', async (req, res) => {
             user: {
                 id: data.user.id,
                 email: data.user.email,
-                user_id: data.user.user_metadata?.user_id,
+                user_id: data.user.user_metadata?.user_id || generarIDUsuario(),
                 nickname: data.user.user_metadata?.nickname || email.split('@')[0],
                 role: data.user.user_metadata?.role || 'user',
                 verified: true,
@@ -256,8 +242,9 @@ app.post('/api/login', async (req, res) => {
                 cws: data.user.user_metadata?.cws || 0,
                 phone: data.user.user_metadata?.phone || '',
                 province: data.user.user_metadata?.province || '',
-                wallet: data.user.user_metadata?.wallet || '',
-                notifications: data.user.user_metadata?.notifications !== false
+                wallet_address: data.user.user_metadata?.wallet_address || '',
+                notifications: data.user.user_metadata?.notifications !== false,
+                created_at: data.user.user_metadata?.created_at || new Date().toISOString()
             }
         });
         
@@ -270,199 +257,34 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 4. VERIFICAR CÓDIGO
-app.post('/api/verify-code', async (req, res) => {
-    try {
-        const { email, code } = req.body;
-        
-        if (!email || !code) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Email y código son requeridos' 
-            });
-        }
-        
-        // Buscar código válido
-        const { data: codes, error: fetchError } = await supabase
-            .from('email_verification_codes')
-            .select('*')
-            .eq('email', email.toLowerCase())
-            .eq('code', code)
-            .eq('used', false)
-            .gt('expires_at', new Date().toISOString())
-            .limit(1);
-        
-        if (fetchError || !codes || codes.length === 0) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Código inválido o expirado' 
-            });
-        }
-        
-        // Marcar código como usado
-        await supabase
-            .from('email_verification_codes')
-            .update({ used: true })
-            .eq('id', codes[0].id);
-        
-        // Buscar usuario
-        const { data: { users } } = await supabase.auth.admin.listUsers();
-        const targetUser = users.find(u => u.email === email.toLowerCase());
-        
-        if (!targetUser) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Usuario no encontrado' 
-            });
-        }
-        
-        // Actualizar usuario como verificado
-        const { error: updateError } = await supabase.auth.admin.updateUserById(
-            targetUser.id,
-            {
-                user_metadata: { 
-                    ...targetUser.user_metadata,
-                    email_verified: true,
-                    email_verified_at: new Date().toISOString()
-                }
-            }
-        );
-        
-        if (updateError) {
-            throw updateError;
-        }
-        
-        res.json({
-            success: true,
-            message: '¡Email verificado exitosamente!',
-            email: email,
-            verified: true
-        });
-        
-    } catch (error) {
-        console.error('❌ Error verificando código:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
+// ========== RUTAS PROTEGIDAS ==========
 
-// 5. REENVIAR CÓDIGO
-app.post('/api/resend-code', async (req, res) => {
+// 4. VERIFICAR TOKEN
+app.get('/api/verify-token', authenticateToken, async (req, res) => {
     try {
-        const { email } = req.body;
-        
-        if (!email) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Email es requerido' 
-            });
-        }
-        
-        // Verificar usuario
-        const { data: { users } } = await supabase.auth.admin.listUsers();
-        const targetUser = users.find(u => u.email === email.toLowerCase());
-        
-        if (!targetUser) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Usuario no encontrado' 
-            });
-        }
-        
-        if (targetUser.user_metadata?.email_verified) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'El email ya está verificado' 
-            });
-        }
-        
-        // Marcar códigos anteriores como expirados
-        await supabase
-            .from('email_verification_codes')
-            .update({ used: true })
-            .eq('email', email.toLowerCase())
-            .eq('used', false);
-        
-        // Generar nuevo código
-        const verificationCode = generarCodigoVerificacion();
-        
-        const expiresAt = new Date();
-        expiresAt.setMinutes(expiresAt.getMinutes() + 15);
-        
-        // Guardar nuevo código
-        const { error: dbError } = await supabase
-            .from('email_verification_codes')
-            .insert([
-                {
-                    email: email.toLowerCase(),
-                    code: verificationCode,
-                    expires_at: expiresAt.toISOString(),
-                    used: false
-                }
-            ]);
-        
-        if (dbError) {
-            throw dbError;
-        }
-        
-        res.json({
-            success: true,
-            message: 'Nuevo código generado',
-            email: email,
-            code: verificationCode // Para que el frontend lo envíe con EmailJS
-        });
-        
-    } catch (error) {
-        console.error('❌ Error reenviando código:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// 6. VERIFICAR TOKEN
-app.get('/api/verify-token', async (req, res) => {
-    try {
-        const token = req.headers['authorization']?.split(' ')[1];
-        
-        if (!token) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token requerido' 
-            });
-        }
-        
-        const { data: { user }, error } = await supabase.auth.getUser(token);
-        
-        if (error || !user) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token inválido' 
-            });
-        }
+        const user = req.user;
         
         res.json({
             success: true,
             user: {
                 id: user.id,
                 email: user.email,
-                user_id: user.user_metadata?.user_id || 'CROM-' + user.id.slice(0, 8),
+                user_id: user.user_metadata?.user_id || generarIDUsuario(),
                 nickname: user.user_metadata?.nickname || user.email.split('@')[0],
                 role: user.user_metadata?.role || 'user',
-                verified: !!user.user_metadata?.email_verified,
+                verified: true,
                 cwt: user.user_metadata?.cwt || 0,
                 cws: user.user_metadata?.cws || 0,
                 phone: user.user_metadata?.phone || '',
                 province: user.user_metadata?.province || '',
-                wallet: user.user_metadata?.wallet || '',
-                notifications: user.user_metadata?.notifications !== false
+                wallet_address: user.user_metadata?.wallet_address || '',
+                notifications: user.user_metadata?.notifications !== false,
+                created_at: user.user_metadata?.created_at || user.created_at
             }
         });
         
     } catch (error) {
+        console.error('❌ Error verificando token:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error al verificar token' 
@@ -470,42 +292,36 @@ app.get('/api/verify-token', async (req, res) => {
     }
 });
 
-// 7. DASHBOARD
-app.get('/api/dashboard', async (req, res) => {
+// 5. DASHBOARD - Obtener datos completos del usuario
+app.get('/api/dashboard', authenticateToken, async (req, res) => {
     try {
-        const token = req.headers['authorization']?.split(' ')[1];
+        const user = req.user;
         
-        if (!token) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token requerido' 
-            });
-        }
-        
-        const { data: { user }, error } = await supabase.auth.getUser(token);
-        
-        if (error || !user) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token inválido' 
-            });
-        }
+        // Aquí podrías agregar más datos del dashboard
+        // Por ejemplo: estadísticas, transacciones recientes, etc.
         
         res.json({
             success: true,
             user: {
                 id: user.id,
                 email: user.email,
-                user_id: user.user_metadata?.user_id || 'CROM-' + user.id.slice(0, 8),
+                user_id: user.user_metadata?.user_id || generarIDUsuario(),
                 nickname: user.user_metadata?.nickname || user.email.split('@')[0],
                 role: user.user_metadata?.role || 'user',
-                verified: !!user.user_metadata?.email_verified,
+                verified: true,
                 cwt: user.user_metadata?.cwt || 0,
                 cws: user.user_metadata?.cws || 0,
                 phone: user.user_metadata?.phone || '',
                 province: user.user_metadata?.province || '',
-                wallet: user.user_metadata?.wallet || '',
-                notifications: user.user_metadata?.notifications !== false
+                wallet_address: user.user_metadata?.wallet_address || '',
+                notifications: user.user_metadata?.notifications !== false,
+                created_at: user.user_metadata?.created_at || user.created_at
+            },
+            dashboard: {
+                total_balance: (user.user_metadata?.cwt || 0) + (user.user_metadata?.cws || 0),
+                transactions_today: 0,
+                pending_transactions: 0,
+                last_login: new Date().toISOString()
             }
         });
         
@@ -518,29 +334,43 @@ app.get('/api/dashboard', async (req, res) => {
     }
 });
 
-// 8. ACTUALIZAR PERFIL
-app.put('/api/user/profile', async (req, res) => {
+// 6. OBTENER PERFIL DEL USUARIO
+app.get('/api/user/profile', authenticateToken, async (req, res) => {
     try {
-        const token = req.headers['authorization']?.split(' ')[1];
+        const user = req.user;
         
-        if (!token) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token requerido' 
-            });
-        }
+        res.json({
+            success: true,
+            profile: {
+                id: user.id,
+                email: user.email,
+                user_id: user.user_metadata?.user_id || generarIDUsuario(),
+                nickname: user.user_metadata?.nickname || user.email.split('@')[0],
+                phone: user.user_metadata?.phone || '',
+                province: user.user_metadata?.province || '',
+                wallet_address: user.user_metadata?.wallet_address || '',
+                notifications: user.user_metadata?.notifications !== false,
+                created_at: user.user_metadata?.created_at || user.created_at,
+                last_updated: user.updated_at
+            }
+        });
         
-        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    } catch (error) {
+        console.error('❌ Error obteniendo perfil:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error interno del servidor' 
+        });
+    }
+});
+
+// 7. ACTUALIZAR PERFIL
+app.put('/api/user/profile', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        const { nickname, phone, province, wallet_address, notifications } = req.body;
         
-        if (userError || !user) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token inválido' 
-            });
-        }
-        
-        const { nickname, phone, province, wallet, notifications } = req.body;
-        
+        // Validar campos requeridos
         if (!nickname || !phone || !province) {
             return res.status(400).json({ 
                 success: false, 
@@ -548,12 +378,13 @@ app.put('/api/user/profile', async (req, res) => {
             });
         }
         
+        // Actualizar usuario en Supabase
         const { error } = await supabase.auth.updateUser({
             data: {
                 nickname,
                 phone,
                 province,
-                wallet: wallet || '',
+                wallet_address: wallet_address || '',
                 notifications: notifications !== false
             }
         });
@@ -564,7 +395,15 @@ app.put('/api/user/profile', async (req, res) => {
         
         res.json({
             success: true,
-            message: 'Perfil actualizado correctamente'
+            message: 'Perfil actualizado correctamente',
+            profile: {
+                nickname,
+                phone,
+                province,
+                wallet_address,
+                notifications: notifications !== false,
+                updated_at: new Date().toISOString()
+            }
         });
         
     } catch (error) {
@@ -576,8 +415,105 @@ app.put('/api/user/profile', async (req, res) => {
     }
 });
 
-// 9. LOGOUT
-app.post('/api/logout', async (req, res) => {
+// 8. OBTENER BALANCE
+app.get('/api/user/balance', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        
+        res.json({
+            success: true,
+            balance: {
+                cwt: user.user_metadata?.cwt || 0,
+                cws: user.user_metadata?.cws || 0,
+                total: (user.user_metadata?.cwt || 0) + (user.user_metadata?.cws || 0),
+                currency: 'USD',
+                last_updated: new Date().toISOString()
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error obteniendo balance:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error interno del servidor' 
+        });
+    }
+});
+
+// 9. ACTUALIZAR BALANCE (solo admin)
+app.post('/api/user/update-balance', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        const { cwt, cws, operation, amount, reason } = req.body;
+        
+        // Verificar si es admin
+        if (user.user_metadata?.role !== 'admin') {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Acceso denegado. Solo administradores.' 
+            });
+        }
+        
+        // Obtener usuario actual para actualizar balance
+        const currentCWT = user.user_metadata?.cwt || 0;
+        const currentCWS = user.user_metadata?.cws || 0;
+        
+        let newCWT = currentCWT;
+        let newCWS = currentCWS;
+        
+        if (operation === 'add') {
+            newCWT += parseFloat(cwt) || 0;
+            newCWS += parseInt(cws) || 0;
+        } else if (operation === 'subtract') {
+            newCWT -= parseFloat(cwt) || 0;
+            newCWS -= parseInt(cws) || 0;
+        } else {
+            newCWT = parseFloat(cwt) || 0;
+            newCWS = parseInt(cws) || 0;
+        }
+        
+        // Asegurar que no sean negativos
+        if (newCWT < 0) newCWT = 0;
+        if (newCWS < 0) newCWS = 0;
+        
+        // Actualizar metadata del usuario
+        const { error } = await supabase.auth.updateUser({
+            data: {
+                ...user.user_metadata,
+                cwt: newCWT,
+                cws: newCWS
+            }
+        });
+        
+        if (error) {
+            throw error;
+        }
+        
+        res.json({
+            success: true,
+            message: 'Balance actualizado correctamente',
+            balance: {
+                cwt: newCWT,
+                cws: newCWS,
+                previous_cwt: currentCWT,
+                previous_cws: currentCWS,
+                operation,
+                reason: reason || 'Actualización manual',
+                timestamp: new Date().toISOString()
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error actualizando balance:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error interno del servidor' 
+        });
+    }
+});
+
+// 10. LOGOUT
+app.post('/api/logout', authenticateToken, async (req, res) => {
     try {
         const { error } = await supabase.auth.signOut();
         
@@ -601,24 +537,15 @@ app.post('/api/logout', async (req, res) => {
 
 // ========== ADMIN ROUTES ==========
 
-// 10. OBTENER TODOS LOS USUARIOS (admin)
-app.get('/api/admin/users', async (req, res) => {
+// 11. OBTENER TODOS LOS USUARIOS (admin)
+app.get('/api/admin/users', authenticateToken, async (req, res) => {
     try {
-        const token = req.headers['authorization']?.split(' ')[1];
+        const user = req.user;
         
-        if (!token) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token requerido' 
-            });
-        }
-        
-        const { data: { user } } = await supabase.auth.getUser(token);
-        
-        if (!user || user.user_metadata?.role !== 'admin') {
+        if (user.user_metadata?.role !== 'admin') {
             return res.status(403).json({ 
                 success: false, 
-                message: 'Acceso denegado' 
+                message: 'Acceso denegado. Solo administradores.' 
             });
         }
         
@@ -628,22 +555,25 @@ app.get('/api/admin/users', async (req, res) => {
             throw error;
         }
         
-        const usuariosFormateados = users.map(user => ({
-            id: user.id,
-            email: user.email,
-            user_id: user.user_metadata?.user_id || 'N/A',
-            nickname: user.user_metadata?.nickname || 'Sin nickname',
-            cwt: user.user_metadata?.cwt || 0,
-            cws: user.user_metadata?.cws || 0,
-            role: user.user_metadata?.role || 'user',
-            verified: !!user.user_metadata?.email_verified,
-            phone: user.user_metadata?.phone || '',
-            province: user.user_metadata?.province || '',
-            created_at: user.created_at
+        const usuariosFormateados = users.map(u => ({
+            id: u.id,
+            email: u.email,
+            user_id: u.user_metadata?.user_id || 'N/A',
+            nickname: u.user_metadata?.nickname || 'Sin nickname',
+            cwt: u.user_metadata?.cwt || 0,
+            cws: u.user_metadata?.cws || 0,
+            role: u.user_metadata?.role || 'user',
+            verified: !!u.user_metadata?.email_verified,
+            phone: u.user_metadata?.phone || '',
+            province: u.user_metadata?.province || '',
+            wallet_address: u.user_metadata?.wallet_address || '',
+            created_at: u.created_at,
+            last_sign_in: u.last_sign_in_at
         }));
         
         res.json({
             success: true,
+            total_users: usuariosFormateados.length,
             users: usuariosFormateados
         });
         
@@ -656,38 +586,21 @@ app.get('/api/admin/users', async (req, res) => {
     }
 });
 
-// 11. ACTUALIZAR SALDO (admin)
-app.put('/api/admin/users/:userId/balance', async (req, res) => {
+// 12. ACTUALIZAR SALDO DE USUARIO (admin)
+app.put('/api/admin/users/:userId/balance', authenticateToken, async (req, res) => {
     try {
-        const token = req.headers['authorization']?.split(' ')[1];
+        const adminUser = req.user;
+        const { userId } = req.params;
+        const { cwt, cws, operation, reason } = req.body;
         
-        if (!token) {
-            return res.status(401).json({ 
-                success: false, 
-                message: 'Token requerido' 
-            });
-        }
-        
-        const { data: { user } } = await supabase.auth.getUser(token);
-        
-        if (!user || user.user_metadata?.role !== 'admin') {
+        if (adminUser.user_metadata?.role !== 'admin') {
             return res.status(403).json({ 
                 success: false, 
-                message: 'Acceso denegado' 
+                message: 'Acceso denegado. Solo administradores.' 
             });
         }
         
-        const { userId } = req.params;
-        const { cwt, cws, note } = req.body;
-        
-        if (cwt < 0 || cws < 0) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Los balances no pueden ser negativos' 
-            });
-        }
-        
-        // Obtener usuario actual
+        // Obtener usuario objetivo
         const { data: { user: targetUser }, error: userError } = await supabase.auth.admin.getUserById(userId);
         
         if (userError || !targetUser) {
@@ -697,14 +610,35 @@ app.put('/api/admin/users/:userId/balance', async (req, res) => {
             });
         }
         
-        // Actualizar metadata
+        const currentCWT = targetUser.user_metadata?.cwt || 0;
+        const currentCWS = targetUser.user_metadata?.cws || 0;
+        
+        let newCWT = currentCWT;
+        let newCWS = currentCWS;
+        
+        if (operation === 'add') {
+            newCWT += parseFloat(cwt) || 0;
+            newCWS += parseInt(cws) || 0;
+        } else if (operation === 'subtract') {
+            newCWT -= parseFloat(cwt) || 0;
+            newCWS -= parseInt(cws) || 0;
+        } else {
+            newCWT = parseFloat(cwt) || 0;
+            newCWS = parseInt(cws) || 0;
+        }
+        
+        // Asegurar que no sean negativos
+        if (newCWT < 0) newCWT = 0;
+        if (newCWS < 0) newCWS = 0;
+        
+        // Actualizar usuario
         const { error } = await supabase.auth.admin.updateUserById(
             userId,
             {
                 user_metadata: {
                     ...targetUser.user_metadata,
-                    cwt: parseFloat(cwt) || 0,
-                    cws: parseInt(cws) || 0
+                    cwt: newCWT,
+                    cws: newCWS
                 }
             }
         );
@@ -715,11 +649,184 @@ app.put('/api/admin/users/:userId/balance', async (req, res) => {
         
         res.json({
             success: true,
-            message: 'Balance actualizado correctamente'
+            message: 'Balance actualizado correctamente',
+            user: {
+                id: targetUser.id,
+                email: targetUser.email,
+                user_id: targetUser.user_metadata?.user_id,
+                balance: {
+                    previous: { cwt: currentCWT, cws: currentCWS },
+                    current: { cwt: newCWT, cws: newCWS },
+                    operation,
+                    reason: reason || 'Actualización administrativa',
+                    updated_by: adminUser.email,
+                    timestamp: new Date().toISOString()
+                }
+            }
         });
         
     } catch (error) {
-        console.error('❌ Error actualizando balance:', error);
+        console.error('❌ Error actualizando balance de usuario:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error interno del servidor' 
+        });
+    }
+});
+
+// 13. CAMBIAR ROL DE USUARIO (admin)
+app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => {
+    try {
+        const adminUser = req.user;
+        const { userId } = req.params;
+        const { role } = req.body;
+        
+        if (adminUser.user_metadata?.role !== 'admin') {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Acceso denegado. Solo administradores.' 
+            });
+        }
+        
+        if (!['admin', 'user', 'moderator'].includes(role)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Rol inválido. Roles permitidos: admin, user, moderator' 
+            });
+        }
+        
+        // Obtener usuario objetivo
+        const { data: { user: targetUser }, error: userError } = await supabase.auth.admin.getUserById(userId);
+        
+        if (userError || !targetUser) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Usuario no encontrado' 
+            });
+        }
+        
+        // Actualizar rol
+        const { error } = await supabase.auth.admin.updateUserById(
+            userId,
+            {
+                user_metadata: {
+                    ...targetUser.user_metadata,
+                    role: role
+                }
+            }
+        );
+        
+        if (error) {
+            throw error;
+        }
+        
+        res.json({
+            success: true,
+            message: `Rol actualizado a ${role}`,
+            user: {
+                id: targetUser.id,
+                email: targetUser.email,
+                previous_role: targetUser.user_metadata?.role || 'user',
+                new_role: role,
+                updated_by: adminUser.email,
+                timestamp: new Date().toISOString()
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error cambiando rol:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error interno del servidor' 
+        });
+    }
+});
+
+// ========== RUTAS PARA TRANSACCIONES ==========
+
+// 14. OBTENER TRANSACCIONES DEL USUARIO
+app.get('/api/user/transactions', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        
+        // En un sistema real, esto vendría de una base de datos de transacciones
+        // Por ahora, devolvemos datos de ejemplo
+        
+        const transactions = [
+            {
+                id: 'TXN-001',
+                type: 'deposit',
+                amount: 100,
+                currency: 'CWT',
+                status: 'completed',
+                date: new Date().toISOString(),
+                description: 'Depósito inicial'
+            },
+            {
+                id: 'TXN-002',
+                type: 'withdrawal',
+                amount: 50,
+                currency: 'CWS',
+                status: 'pending',
+                date: new Date(Date.now() - 86400000).toISOString(),
+                description: 'Retiro de tokens'
+            }
+        ];
+        
+        res.json({
+            success: true,
+            transactions: transactions,
+            total: transactions.length,
+            balance: {
+                cwt: user.user_metadata?.cwt || 0,
+                cws: user.user_metadata?.cws || 0
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error obteniendo transacciones:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error interno del servidor' 
+        });
+    }
+});
+
+// 15. CREAR NUEVA TRANSACCIÓN
+app.post('/api/user/transactions', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        const { type, amount, currency, description } = req.body;
+        
+        if (!type || !amount || !currency) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Tipo, cantidad y moneda son requeridos' 
+            });
+        }
+        
+        // Generar ID de transacción
+        const transactionId = `TXN-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 1000)}`;
+        
+        // En un sistema real, aquí guardarías la transacción en la base de datos
+        
+        res.json({
+            success: true,
+            message: 'Transacción creada exitosamente',
+            transaction: {
+                id: transactionId,
+                user_id: user.id,
+                type,
+                amount: parseFloat(amount),
+                currency,
+                description: description || 'Sin descripción',
+                status: 'pending',
+                created_at: new Date().toISOString()
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error creando transacción:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -729,65 +836,19 @@ app.put('/api/admin/users/:userId/balance', async (req, res) => {
 
 // ========== RUTAS PARA ARCHIVOS HTML ==========
 app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/public/login.html');
+    res.sendFile(__dirname + '/login.html');
 });
 
 app.get('/login.html', (req, res) => {
-    res.sendFile(__dirname + '/public/login.html');
+    res.sendFile(__dirname + '/login.html');
 });
 
 app.get('/dashboard.html', (req, res) => {
-    res.sendFile(__dirname + '/public/dashboard.html');
+    res.sendFile(__dirname + '/dashboard.html');
 });
 
-app.get('/verify-email.html', (req, res) => {
-    res.sendFile(__dirname + '/public/verify-email.html');
-});
-
-// Ruta para verificar estado
-app.get('/api/check-tables', async (req, res) => {
-    try {
-        const tablaCodigosExiste = await tablaExiste('email_verification_codes');
-        
-        res.json({
-            success: true,
-            tables: {
-                email_verification_codes: tablaCodigosExiste
-            },
-            instructions: !tablaCodigosExiste ? 'CREATE TABLE email_verification_codes en Supabase SQL Editor' : 'Tabla existe'
-        });
-    } catch (error) {
-        res.json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// SQL para crear tabla
-app.get('/api/create-tables-sql', (req, res) => {
-    const sql = `
-CREATE TABLE IF NOT EXISTS email_verification_codes (
-    id BIGSERIAL PRIMARY KEY,
-    email VARCHAR(255) NOT NULL,
-    code VARCHAR(6) NOT NULL,
-    used BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()),
-    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_email_verification_codes_email 
-ON email_verification_codes(email);
-
-CREATE INDEX IF NOT EXISTS idx_email_verification_codes_active 
-ON email_verification_codes(email, used, expires_at) 
-WHERE used = false AND expires_at > NOW();
-    `;
-    
-    res.json({
-        success: true,
-        sql: sql
-    });
+app.get('/admin.html', (req, res) => {
+    res.sendFile(__dirname + '/admin.html');
 });
 
 // ========== INICIAR SERVIDOR ==========
@@ -795,29 +856,31 @@ app.listen(PORT, async () => {
     console.log(`🚀 Cromwell Pay ejecutándose en http://localhost:${PORT}`);
     console.log(`🔗 Supabase: ${supabaseUrl}`);
     
-    console.log('\n🔍 Verificando configuración...');
-    const tablaCodigosExiste = await tablaExiste('email_verification_codes');
+    console.log('\n✅ ENDPOINTS DISPONIBLES:');
+    console.log('   PÚBLICOS:');
+    console.log('   • GET  /api/status');
+    console.log('   • POST /api/register');
+    console.log('   • POST /api/login');
     
-    if (tablaCodigosExiste) {
-        console.log('✅ Tabla email_verification_codes: EXISTE');
-        console.log('\n📧 SISTEMA DE VERIFICACIÓN:');
-        console.log('   • EmailJS: ENVÍA los emails (frontend)');
-        console.log('   • Supabase: NO envía emails (desactivado)');
-        console.log('   • Backend: Solo genera y verifica códigos');
-    } else {
-        console.log('❌ Tabla email_verification_codes: NO EXISTE');
-        console.log('\n📋 CREAR TABLA:');
-        console.log('1. Ve a Supabase -> SQL Editor');
-        console.log(`2. Visita http://localhost:${PORT}/api/create-tables-sql`);
-        console.log('3. Copia el SQL y ejecútalo');
-        console.log('4. Reinicia el servidor');
-    }
+    console.log('\n   PROTEGIDOS:');
+    console.log('   • GET  /api/verify-token');
+    console.log('   • GET  /api/dashboard');
+    console.log('   • GET  /api/user/profile');
+    console.log('   • PUT  /api/user/profile');
+    console.log('   • GET  /api/user/balance');
+    console.log('   • GET  /api/user/transactions');
+    console.log('   • POST /api/user/transactions');
+    console.log('   • POST /api/logout');
     
-    console.log('\n✅ SISTEMA LISTO - EMAILJS SOLO:');
-    console.log('   • Registro: Genera código, frontend envía email');
-    console.log('   • Login: Solo usuarios verificados');
-    console.log('   • Verificación: Códigos de 6 dígitos');
-    console.log('\n⚠️  CONFIGURACIÓN SUPABASE IMPORTANTE:');
-    console.log('   • Desactiva "Confirm email" en Authentication');
-    console.log('   • Desactiva todos los email templates');
+    console.log('\n   ADMIN:');
+    console.log('   • GET  /api/admin/users');
+    console.log('   • PUT  /api/admin/users/:userId/balance');
+    console.log('   • PUT  /api/admin/users/:userId/role');
+    
+    console.log('\n📋 SISTEMA LISTO:');
+    console.log('   • Registro con código en pantalla');
+    console.log('   • Login inmediato');
+    console.log('   • Dashboard completo');
+    console.log('   • Panel de administración');
+    console.log('   • Gestión de tokens CWT/CWS');
 });
