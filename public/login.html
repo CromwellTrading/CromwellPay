@@ -1279,12 +1279,18 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    registerBtn.innerHTML = '<i class="fas fa-check"></i> ¡REGISTRADO!';
-                    registerBtn.style.background = 'linear-gradient(135deg, #00cc7a, #00a865)';
-                    
-                    setTimeout(() => {
-                        showVerificationModal(data.email, data.userId);
-                    }, 1000);
+    registerBtn.innerHTML = '<i class="fas fa-check"></i> ¡REGISTRADO!';
+    registerBtn.style.background = 'linear-gradient(135deg, #00cc7a, #00a865)';
+    
+    // Guardar email y código en localStorage para verify-email.html
+    localStorage.setItem('verification_email', email);
+    localStorage.setItem('verification_code', data.code);
+    
+    // Redirigir a verify-email.html
+    setTimeout(() => {
+        window.location.href = 'verify-email.html?email=' + encodeURIComponent(email);
+    }, 1000);
+}
                     
                 } else {
                     showStatus(`❌ ${data.message}`, 'error');
