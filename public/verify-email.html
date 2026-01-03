@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Cromwell Pay | Verificación de Email</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800&family=Exo+2:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.emailjs.com/dist/email.min.js"></script>
+    <style>
+        :root {
+            --primary: #00ff9d;
+            --primary-dark: #00cc7a;
+            --secondary: #6c63ff;
+            --secondary-dark: #4a43d6;
+            --accent: #ff3e80;
+            --dark: #0a0a0a;
+            --dark-light: #1a1a1a;
+            --neon-glow: 0 0 15px var(--primary);
+            --font-heading: 'Orbitron', sans-serif;
+            --font-body: 'Exo 2', sans-serif;
+        }
+
+        /* Reset y base */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html {
+            font-size: 16px;
+            height: 100%;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--dark);
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow-x: hidden;
+            position: relative;
+            padding: 15px;
+            line-height: 1.5;
+        }
+
+        /* Fondo responsivo */
+        .blockchain-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(circle at 20% 50%, rgba(0, 255, 157, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 80% 20%, rgba(108, 99, 255, 0.05) 0%, transparent 40%);
+            z-index: -2;
+        }
+
+        .blockchain-grid {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(90deg, rgba(0, 255, 157, 0.03) 1px, transparent 1px),
+                linear-gradient(rgba(0, 255, 157, 0.03) 1px, transparent 1px);
+            background-size: 30px 30px;
+            animation: gridMove 30s linear infinite;
+        }
+
+        /* Contenedor principal */
+        .verification-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 100%;
+            min-height: auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0;
+        }
+
+        .verification-container {
+            position: relative;
+            z-index: 100;
+            width: 100%;
+            max-width: 450px;
+            padding: 30px 25px;
+            background: rgba(15, 15, 20, 0.98);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 
+                0 10px 30px rgba(0, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            overflow: hidden;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        /* Línea de escaneo */
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--primary), transparent);
+            animation: scan 4s linear infinite;
+            opacity: 0.4;
+            z-index: 1;
+        }
+
+        /* Logo */
+        .logo-container {
+            text-align: center;
+            margin-bottom: 25px;
+            position: relative;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: transparent;
+            background: linear-gradient(45deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            text-shadow: 0 0 15px rgba(0, 255, 157, 0.4);
+            font-family: var(--font-heading);
+            letter-spacing: 1px;
+            flex-wrap: wrap;
+            justify-content: center;
+            line-height: 1.2;
+        }
+
+        .coin-icon {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            animation: coinFloat 3s ease-in-out infinite;
+            filter: drop-shadow(0 0 6px var(--primary));
+            flex-shrink: 0;
+        }
+
+        .coin-icon i {
+            font-size: 2rem;
+            color: var(--primary);
+            position: relative;
+            z-index: 2;
+        }
+
+        .logo-subtitle {
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.6);
+            letter-spacing: 1.5px;
+            margin-top: 6px;
+            text-transform: uppercase;
+            font-weight: 300;
+            font-family: var(--font-heading);
+            line-height: 1.3;
+        }
+
+        /* Email display */
+        .email-display {
+            background: rgba(0, 255, 157, 0.1);
+            border: 1px solid rgba(0, 255, 157, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 0.9rem;
+            word-break: break-all;
+        }
+
+        .email-display span {
+            color: var(--primary);
+            font-weight: bold;
+        }
+
+        /* Instrucciones */
+        .instructions {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
+            margin: 20px 0;
+            line-height: 1.5;
+        }
+
+        .instructions i {
+            color: var(--primary);
+            margin-right: 8px;
+        }
+
+        /* Input de código */
+        .code-inputs-container {
+            margin: 30px 0;
+        }
+
+        .code-inputs {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .code-input {
+            width: 50px;
+            height: 60px;
+            text-align: center;
+            font-size: 24px;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #fff;
+            transition: all 0.3s ease;
+        }
+
+        .code-input:focus {
+            border-color: var(--primary);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 0 3px rgba(0, 255, 157, 0.1);
+            outline: none;
+        }
+
+        .code-input.filled {
+            border-color: var(--primary);
+            background: rgba(0, 255, 157, 0.1);
+        }
+
+        /* Botones */
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 25px;
+        }
+
+        .action-btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: var(--font-heading);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
+            min-height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            touch-action: manipulation;
+        }
+
+        .action-btn.primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: var(--dark);
+        }
+
+        .action-btn.secondary {
+            background: rgba(108, 99, 255, 0.1);
+            color: var(--secondary);
+            border: 1px solid rgba(108, 99, 255, 0.3);
+        }
+
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Contador de reenvío */
+        .resend-timer {
+            text-align: center;
+            margin-top: 20px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .resend-link {
+            color: var(--primary);
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .resend-link.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Mensaje de estado */
+        .status-message {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.5);
+            min-height: 40px;
+            font-family: var(--font-body);
+            word-break: break-word;
+            padding: 0 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1.4;
+        }
+
+        .status-success {
+            color: var(--primary) !important;
+            font-weight: bold;
+        }
+
+        .status-error {
+            color: var(--accent) !important;
+            font-weight: bold;
+        }
+
+        /* Aviso de seguridad */
+        .security-notice {
+            text-align: center;
+            margin-top: 25px;
+            padding: 12px;
+            background: rgba(0, 255, 157, 0.05);
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 157, 0.1);
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.6);
+            line-height: 1.4;
+        }
+
+        .security-notice i {
+            color: var(--primary);
+            margin-right: 6px;
+        }
+
+        /* Animaciones */
+        @keyframes coinFloat {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-6px) rotate(5deg); }
+        }
+
+        @keyframes scan {
+            0% {
+                top: 0;
+                opacity: 0;
+            }
+            10% {
+                opacity: 0.5;
+            }
+            90% {
+                opacity: 0.5;
+            }
+            100% {
+                top: 100%;
+                opacity: 0;
+            }
+        }
+
+        @keyframes gridMove {
+            0% {
+                background-position: 0 0;
+            }
+            100% {
+                background-position: 30px 30px;
+            }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            .code-inputs {
+                gap: 8px;
+            }
+            
+            .code-input {
+                width: 45px;
+                height: 55px;
+                font-size: 22px;
+            }
+            
+            .verification-container {
+                padding: 25px 20px;
+            }
+        }
+
+        @media (max-width: 360px) {
+            .code-inputs {
+                gap: 6px;
+            }
+            
+            .code-input {
+                width: 40px;
+                height: 50px;
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Fondo con efecto blockchain -->
+    <div class="blockchain-bg">
+        <div class="blockchain-grid"></div>
+    </div>
+    
+    <!-- Contenedor principal -->
+    <div class="verification-wrapper">
+        <div class="verification-container">
+            <!-- Línea de escaneo -->
+            <div class="scan-line"></div>
+            
+            <!-- Logo Cromwell Pay -->
+            <div class="logo-container">
+                <div class="logo">
+                    <div class="coin-icon">
+                        <i class="fas fa-coins"></i>
+                    </div>
+                    CROMWELL PAY
+                </div>
+                <div class="logo-subtitle">Verificación de Email</div>
+            </div>
+            
+            <h2 style="color: var(--primary); font-family: var(--font-heading); margin-bottom: 10px;">
+                <i class="fas fa-shield-alt"></i> VERIFICA TU EMAIL
+            </h2>
+            
+            <div class="instructions">
+                Hemos enviado un código de 6 dígitos a:
+            </div>
+            
+            <div class="email-display" id="emailDisplay">
+                <span id="displayEmail">cargando...</span>
+            </div>
+            
+            <div class="instructions">
+                <i class="fas fa-info-circle"></i> Ingresa el código de 6 dígitos que recibiste por correo electrónico.
+                <br><br>
+                <span style="color: var(--accent); font-size: 0.8rem;">
+                    <i class="fas fa-exclamation-triangle"></i> 
+                    <strong>IMPORTANTE:</strong> Revisa tu carpeta de SPAM si no encuentras el correo.
+                </span>
+            </div>
+            
+            <div class="code-inputs-container">
+                <div class="code-inputs" id="codeInputs">
+                    <input type="text" class="code-input" maxlength="1" data-index="0" inputmode="numeric">
+                    <input type="text" class="code-input" maxlength="1" data-index="1" inputmode="numeric">
+                    <input type="text" class="code-input" maxlength="1" data-index="2" inputmode="numeric">
+                    <input type="text" class="code-input" maxlength="1" data-index="3" inputmode="numeric">
+                    <input type="text" class="code-input" maxlength="1" data-index="4" inputmode="numeric">
+                    <input type="text" class="code-input" maxlength="1" data-index="5" inputmode="numeric">
+                </div>
+                
+                <div class="status-message" id="statusMessage">
+                    Ingresa el código de 6 dígitos
+                </div>
+                
+                <div class="resend-timer">
+                    ¿No recibiste el código? 
+                    <a class="resend-link disabled" id="resendLink">Reenviar código</a>
+                    <span id="timerText" style="display: none;">
+                        <br>(espera <span id="countdown">60</span> segundos)
+                    </span>
+                </div>
+            </div>
+            
+            <div class="action-buttons">
+                <button class="action-btn primary" id="verifyBtn">
+                    <i class="fas fa-check-circle"></i> Verificar Cuenta
+                </button>
+                <button class="action-btn secondary" id="backToLoginBtn">
+                    <i class="fas fa-arrow-left"></i> Volver al Login
+                </button>
+            </div>
+            
+            <div class="security-notice">
+                <i class="fas fa-shield-alt"></i>
+                Sistema seguro de verificación - Cromwell Pay
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // CONFIGURACIÓN
+        // ============================================
+        const API_BASE_URL = window.location.origin;
+        let verificationEmail = '';
+        let verificationCode = '';
+        let resendTimer = null;
+        let countdown = 60;
+        
+        // Configuración EmailJS (REEMPLAZA CON TUS DATOS)
+        const EMAILJS_CONFIG = {
+            serviceId: 'YOUR_SERVICE_ID', // Reemplaza con tu Service ID
+            templateId: 'YOUR_TEMPLATE_ID', // Reemplaza con tu Template ID
+            userId: 'YOUR_USER_ID' // Reemplaza con tu Public Key/User ID
+        };
+        
+        // ============================================
+        // INICIALIZACIÓN EMAILJS
+        // ============================================
+        (function() {
+            emailjs.init(EMAILJS_CONFIG.userId);
+            console.log('✅ EmailJS inicializado');
+        })();
+        
+        // ============================================
+        // FUNCIONES DE EMAILJS
+        // ============================================
+        async function sendVerificationEmail(email, code) {
+            try {
+                const templateParams = {
+                    to_email: email,
+                    from_name: 'Cromwell Pay',
+                    reply_to: 'cromwellpayclient@gmail.com',
+                    code: code,
+                    user_email: email,
+                    verification_code: code,
+                    verification_link: `${window.location.origin}/verify-email.html?email=${encodeURIComponent(email)}`,
+                    site_name: 'Cromwell Pay',
+                    current_year: new Date().getFullYear()
+                };
+                
+                const response = await emailjs.send(
+                    EMAILJS_CONFIG.serviceId,
+                    EMAILJS_CONFIG.templateId,
+                    templateParams
+                );
+                
+                console.log('✅ Email enviado via EmailJS:', response);
+                return { success: true };
+            } catch (error) {
+                console.error('❌ Error enviando email:', error);
+                return { 
+                    success: false, 
+                    message: 'Error al enviar el email. El código es: ' + code 
+                };
+            }
+        }
+        
+        // ============================================
+        // FUNCIONES AUXILIARES
+        // ============================================
+        function showStatus(message, type = 'info') {
+            const statusMessage = document.getElementById('statusMessage');
+            statusMessage.textContent = message;
+            statusMessage.className = 'status-message';
+            
+            if (type === 'error') {
+                statusMessage.classList.add('status-error');
+            } else if (type === 'success') {
+                statusMessage.classList.add('status-success');
+            }
+        }
+        
+        function shakeElement(element) {
+            element.style.animation = 'shake 0.5s';
+            setTimeout(() => {
+                element.style.animation = '';
+            }, 500);
+        }
+        
+        function getCodeFromInputs() {
+            const inputs = document.querySelectorAll('.code-input');
+            return Array.from(inputs).map(input => input.value).join('');
+        }
+        
+        function startResendTimer() {
+            clearInterval(resendTimer);
+            countdown = 60;
+            
+            const resendLink = document.getElementById('resendLink');
+            const timerText = document.getElementById('timerText');
+            const countdownElement = document.getElementById('countdown');
+            
+            resendLink.classList.add('disabled');
+            timerText.style.display = 'inline';
+            countdownElement.textContent = countdown;
+            
+            resendTimer = setInterval(() => {
+                countdown--;
+                countdownElement.textContent = countdown;
+                
+                if (countdown <= 0) {
+                    clearInterval(resendTimer);
+                    resendLink.classList.remove('disabled');
+                    timerText.style.display = 'none';
+                }
+            }, 1000);
+        }
+        
+        // ============================================
+        // MANEJO DE INPUTS DE CÓDIGO
+        // ============================================
+        const codeInputs = document.querySelectorAll('.code-input');
+        
+        codeInputs.forEach((input, index) => {
+            input.addEventListener('input', (e) => {
+                // Solo permitir números
+                e.target.value = e.target.value.replace(/[^0-9]/g, '');
+                
+                if (e.target.value.length === 1 && index < codeInputs.length - 1) {
+                    codeInputs[index + 1].focus();
+                }
+                
+                // Actualizar clase de estilo
+                if (e.target.value) {
+                    e.target.classList.add('filled');
+                } else {
+                    e.target.classList.remove('filled');
+                }
+            });
+            
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && !e.target.value && index > 0) {
+                    codeInputs[index - 1].focus();
+                }
+                
+                if (e.key === 'ArrowLeft' && index > 0) {
+                    codeInputs[index - 1].focus();
+                }
+                
+                if (e.key === 'ArrowRight' && index < codeInputs.length - 1) {
+                    codeInputs[index + 1].focus();
+                }
+            });
+            
+            input.addEventListener('paste', (e) => {
+                e.preventDefault();
+                const pasteData = e.clipboardData.getData('text').replace(/[^0-9]/g, '');
+                
+                if (pasteData.length === 6) {
+                    const digits = pasteData.split('');
+                    digits.forEach((digit, idx) => {
+                        if (codeInputs[idx]) {
+                            codeInputs[idx].value = digit;
+                            codeInputs[idx].classList.add('filled');
+                        }
+                    });
+                    document.getElementById('verifyBtn').focus();
+                }
+            });
+        });
+        
+        // ============================================
+        // VERIFICACIÓN DE CÓDIGO
+        // ============================================
+        document.getElementById('verifyBtn').addEventListener('click', async function() {
+            const code = getCodeFromInputs();
+            
+            if (code.length !== 6) {
+                showStatus('❌ El código debe tener 6 dígitos', 'error');
+                shakeElement(document.getElementById('codeInputs'));
+                return;
+            }
+            
+            if (!verificationEmail) {
+                showStatus('❌ Error: Email no disponible', 'error');
+                return;
+            }
+            
+            const verifyBtn = this;
+            const originalText = verifyBtn.innerHTML;
+            verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> VERIFICANDO...';
+            verifyBtn.disabled = true;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/verify-code`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email: verificationEmail, 
+                        code 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('✅ ¡Cuenta verificada exitosamente!', 'success');
+                    verifyBtn.innerHTML = '<i class="fas fa-check"></i> ¡VERIFICADO!';
+                    verifyBtn.style.background = 'linear-gradient(135deg, #00cc7a, #00a865)';
+                    
+                    // Guardar token y usuario si viene en la respuesta
+                    if (data.token) {
+                        localStorage.setItem('cromwell_token', data.token);
+                    }
+                    
+                    if (data.user) {
+                        localStorage.setItem('cromwell_user', JSON.stringify(data.user));
+                    }
+                    
+                    // Redirigir al dashboard después de 2 segundos
+                    setTimeout(() => {
+                        window.location.href = 'dashboard.html';
+                    }, 2000);
+                } else {
+                    showStatus(`❌ ${data.message}`, 'error');
+                    verifyBtn.innerHTML = originalText;
+                    verifyBtn.disabled = false;
+                    shakeElement(document.getElementById('codeInputs'));
+                }
+            } catch (error) {
+                console.error('Error en verificación:', error);
+                showStatus('❌ Error de conexión con el servidor', 'error');
+                verifyBtn.innerHTML = originalText;
+                verifyBtn.disabled = false;
+            }
+        });
+        
+        // ============================================
+        // REENVÍO DE CÓDIGO
+        // ============================================
+        document.getElementById('resendLink').addEventListener('click', async function() {
+            if (this.classList.contains('disabled')) return;
+            
+            if (!verificationEmail) {
+                showStatus('❌ Error: Email no disponible', 'error');
+                return;
+            }
+            
+            showStatus('Solicitando nuevo código...', 'info');
+            
+            try {
+                // Solicitar nuevo código al servidor
+                const response = await fetch(`${API_BASE_URL}/api/resend-code`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email: verificationEmail 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Enviar el email con EmailJS
+                    const emailResult = await sendVerificationEmail(verificationEmail, data.code);
+                    
+                    if (emailResult.success) {
+                        showStatus('✅ Nuevo código enviado. Revisa tu correo.', 'success');
+                        verificationCode = data.code;
+                    } else {
+                        showStatus(`⚠️ ${emailResult.message}`, 'error');
+                    }
+                    
+                    startResendTimer();
+                    
+                    // Limpiar inputs
+                    codeInputs.forEach(input => {
+                        input.value = '';
+                        input.classList.remove('filled');
+                    });
+                    codeInputs[0].focus();
+                } else {
+                    showStatus(`❌ ${data.message}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error al reenviar código:', error);
+                showStatus('❌ Error de conexión con el servidor', 'error');
+            }
+        });
+        
+        // ============================================
+        // VOLVER AL LOGIN
+        // ============================================
+        document.getElementById('backToLoginBtn').addEventListener('click', function() {
+            window.location.href = 'login.html';
+        });
+        
+        // ============================================
+        // INICIALIZACIÓN
+        // ============================================
+        document.addEventListener('DOMContentLoaded', async function() {
+            // Obtener email de la URL o localStorage
+            const urlParams = new URLSearchParams(window.location.search);
+            verificationEmail = urlParams.get('email') || localStorage.getItem('verification_email');
+            
+            if (!verificationEmail) {
+                // Si no hay email, redirigir al login
+                window.location.href = 'login.html';
+                return;
+            }
+            
+            // Mostrar email
+            document.getElementById('displayEmail').textContent = verificationEmail;
+            
+            // Verificar si ya está verificado
+            const token = localStorage.getItem('cromwell_token');
+            if (token) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/verify-token`, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        window.location.href = 'dashboard.html';
+                    }
+                } catch (error) {
+                    // Token inválido, continuar con verificación
+                }
+            }
+            
+            // Verificar si hay un código en la URL (para desarrollo)
+            const urlCode = urlParams.get('code');
+            if (urlCode && urlCode.length === 6) {
+                // Autorellenar código para desarrollo
+                const digits = urlCode.split('');
+                digits.forEach((digit, idx) => {
+                    if (codeInputs[idx]) {
+                        codeInputs[idx].value = digit;
+                        codeInputs[idx].classList.add('filled');
+                    }
+                });
+            }
+            
+            // Enviar email automáticamente si es la primera vez
+            const emailAlreadySent = localStorage.getItem(`email_sent_${verificationEmail}`);
+            if (!emailAlreadySent) {
+                showStatus('Enviando código de verificación...', 'info');
+                
+                try {
+                    // Solicitar código al servidor
+                    const response = await fetch(`${API_BASE_URL}/api/resend-code`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ 
+                            email: verificationEmail 
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        // Enviar email con EmailJS
+                        const emailResult = await sendVerificationEmail(verificationEmail, data.code);
+                        
+                        if (emailResult.success) {
+                            showStatus('✅ Código enviado. Revisa tu correo.', 'success');
+                            verificationCode = data.code;
+                            localStorage.setItem(`email_sent_${verificationEmail}`, 'true');
+                        } else {
+                            showStatus(`⚠️ ${emailResult.message}`, 'error');
+                        }
+                        
+                        startResendTimer();
+                    } else {
+                        showStatus(`❌ ${data.message}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error enviando email inicial:', error);
+                    showStatus('⚠️ No se pudo enviar el email. Usa el botón "Reenviar código".', 'error');
+                }
+            } else {
+                startResendTimer();
+            }
+            
+            // Autofocus en el primer input
+            setTimeout(() => {
+                codeInputs[0].focus();
+            }, 500);
+        });
+        
+        // Permitir Enter para verificar
+        document.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                const verifyBtn = document.getElementById('verifyBtn');
+                if (verifyBtn && !verifyBtn.disabled) {
+                    verifyBtn.click();
+                }
+            }
+        });
+        
+        console.log('✅ Página de verificación cargada');
+    </script>
+</body>
+</html>
