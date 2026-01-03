@@ -12,8 +12,12 @@ const PORT = process.env.PORT || 3000;
 // ========== CONFIGURACIÓN ==========
 app.use(cors());
 app.use(express.json());
+
+// IMPORTANTE: Servir archivos estáticos desde la carpeta 'public'
+app.use(express.static('public'));
+
+// También servir archivos desde la raíz (para compatibilidad)
 app.use(express.static('.'));
-app.use('/assets', express.static('assets'));
 
 // Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -33,6 +37,7 @@ const transporter = nodemailer.createTransport({
 });
 
 // ========== FUNCIONES AUXILIARES ==========
+// (Mantén todas las funciones auxiliares igual)
 
 function validarEmail(email) {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -80,17 +85,6 @@ const autenticarToken = async (req, res, next) => {
     }
 };
 
-// Middleware: Verificar administrador
-const autenticarAdmin = async (req, res, next) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ 
-            success: false, 
-            message: 'Acceso denegado: Se requiere rol de administrador' 
-        });
-    }
-    next();
-};
-
 // ========== RUTAS PÚBLICAS ==========
 
 // 1. Estado del servidor
@@ -99,7 +93,8 @@ app.get('/api/status', (req, res) => {
         success: true, 
         status: '✅ Servidor Cromwell Pay funcionando correctamente',
         timestamp: new Date().toISOString(),
-        emailConfig: transporter ? 'Configurado' : 'No configurado'
+        emailConfig: transporter ? 'Configurado' : 'No configurado',
+        environment: process.env.NODE_ENV || 'development'
     });
 });
 
@@ -236,7 +231,6 @@ app.post('/api/register', async (req, res) => {
             
         } catch (emailError) {
             console.error('❌ Error al enviar correo:', emailError);
-            // No fallar el registro si el correo falla, pero informar al usuario
         }
         
         res.json({
@@ -580,8 +574,6 @@ app.get('/api/verify-token', autenticarToken, (req, res) => {
     });
 });
 
-// ========== RUTAS PROTEGIDAS ==========
-
 // 7. Dashboard del usuario
 app.get('/api/dashboard', autenticarToken, async (req, res) => {
     try {
@@ -611,331 +603,91 @@ app.get('/api/dashboard', autenticarToken, async (req, res) => {
     }
 });
 
-// 8. Actualizar perfil
-app.put('/api/user/profile', autenticarToken, async (req, res) => {
-    try {
-        const { nickname, phone, province, wallet, notifications } = req.body;
-        
-        if (!nickname || !phone || !province) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Nickname, teléfono y provincia son requeridos' 
-            });
-        }
-        
-        const { error } = await supabase
-            .from('usuarios')
-            .update({
-                nickname,
-                phone,
-                province,
-                wallet,
-                notifications,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', req.user.id);
-        
-        if (error) {
-            throw error;
-        }
-        
-        res.json({
-            success: true,
-            message: 'Perfil actualizado correctamente'
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al actualizar perfil:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
+// ========== RUTAS PARA ARCHIVOS HTML ==========
 
-// 9. Obtener notificaciones
-app.get('/api/notifications', autenticarToken, async (req, res) => {
-    try {
-        const { data: notificaciones, error } = await supabase
-            .from('notificaciones')
-            .select('*')
-            .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false });
-        
-        if (error) {
-            throw error;
-        }
-        
-        res.json({
-            success: true,
-            notifications: notificaciones || []
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al cargar notificaciones:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// 10. Marcar notificación como leída
-app.post('/api/notifications/mark-read', autenticarToken, async (req, res) => {
-    try {
-        const { notificationId } = req.body;
-        
-        if (!notificationId) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'ID de notificación requerido' 
-            });
-        }
-        
-        const { error } = await supabase
-            .from('notificaciones')
-            .update({ read: true })
-            .eq('id', notificationId)
-            .eq('user_id', req.user.id);
-        
-        if (error) {
-            throw error;
-        }
-        
-        res.json({
-            success: true,
-            message: 'Notificación marcada como leída'
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al marcar notificación:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// 11. Marcar todas las notificaciones como leídas
-app.post('/api/notifications/mark-all-read', autenticarToken, async (req, res) => {
-    try {
-        const { error } = await supabase
-            .from('notificaciones')
-            .update({ read: true })
-            .eq('user_id', req.user.id)
-            .eq('read', false);
-        
-        if (error) {
-            throw error;
-        }
-        
-        res.json({
-            success: true,
-            message: 'Todas las notificaciones marcadas como leídas'
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al marcar notificaciones:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// 12. Eliminar todas las notificaciones
-app.delete('/api/notifications', autenticarToken, async (req, res) => {
-    try {
-        const { error } = await supabase
-            .from('notificaciones')
-            .delete()
-            .eq('user_id', req.user.id);
-        
-        if (error) {
-            throw error;
-        }
-        
-        res.json({
-            success: true,
-            message: 'Todas las notificaciones eliminadas'
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al eliminar notificaciones:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// ========== RUTAS DE ADMINISTRADOR ==========
-
-// 13. Obtener todos los usuarios (admin)
-app.get('/api/admin/users', autenticarToken, autenticarAdmin, async (req, res) => {
-    try {
-        const { search } = req.query;
-        
-        let query = supabase
-            .from('usuarios')
-            .select('*')
-            .order('created_at', { ascending: false });
-        
-        if (search) {
-            query = query.or(`email.ilike.%${search}%,user_id.ilike.%${search}%,nickname.ilike.%${search}%`);
-        }
-        
-        const { data: usuarios, error } = await query;
-        
-        if (error) {
-            throw error;
-        }
-        
-        // Remover información sensible
-        const usuariosSeguros = usuarios.map(usuario => {
-            const { password, verification_code, verification_expires, ...usuarioSeguro } = usuario;
-            return usuarioSeguro;
-        });
-        
-        res.json({
-            success: true,
-            users: usuariosSeguros
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al cargar usuarios:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// 14. Actualizar saldo de usuario (admin)
-app.put('/api/admin/users/:userId/balance', autenticarToken, autenticarAdmin, async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const { cwt, cws, note } = req.body;
-        
-        if (cwt < 0 || cws < 0) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Los balances no pueden ser negativos' 
-            });
-        }
-        
-        // Obtener información del usuario
-        const { data: usuario, error: usuarioError } = await supabase
-            .from('usuarios')
-            .select('*')
-            .eq('id', userId)
-            .single();
-        
-        if (usuarioError || !usuario) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Usuario no encontrado' 
-            });
-        }
-        
-        // Actualizar saldo
-        const { error } = await supabase
-            .from('usuarios')
-            .update({
-                cwt: parseFloat(cwt) || 0,
-                cws: parseInt(cws) || 0,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', userId);
-        
-        if (error) {
-            throw error;
-        }
-        
-        // Crear notificación para el usuario
-        await supabase
-            .from('notificaciones')
-            .insert([{
-                user_id: userId,
-                title: 'Balance Actualizado',
-                message: `Tu balance ha sido actualizado por el administrador. CWT: ${cwt}, CWS: ${cws}. ${note || ''}`,
-                type: 'balance_update',
-                read: false,
-                created_at: new Date().toISOString()
-            }]);
-        
-        res.json({
-            success: true,
-            message: 'Balance actualizado correctamente'
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al actualizar balance:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// 15. Obtener estadísticas del sistema (admin)
-app.get('/api/admin/stats', autenticarToken, autenticarAdmin, async (req, res) => {
-    try {
-        // Total de usuarios verificados
-        const { count: totalUsuarios } = await supabase
-            .from('usuarios')
-            .select('*', { count: 'exact', head: true })
-            .eq('verified', true);
-        
-        // Total de CWT
-        const { data: datosCWT } = await supabase
-            .from('usuarios')
-            .select('cwt')
-            .eq('verified', true);
-        
-        // Total de CWS
-        const { data: datosCWS } = await supabase
-            .from('usuarios')
-            .select('cws')
-            .eq('verified', true);
-        
-        const totalCWT = datosCWT.reduce((sum, user) => sum + (parseFloat(user.cwt) || 0), 0);
-        const totalCWS = datosCWS.reduce((sum, user) => sum + (parseInt(user.cws) || 0), 0);
-        
-        res.json({
-            success: true,
-            stats: {
-                totalUsers: totalUsuarios || 0,
-                totalCWT: totalCWT.toFixed(2),
-                totalCWS,
-                totalUSDT: (totalCWT / 0.1 * 5).toFixed(2),
-                totalSaldo: (totalCWS / 10 * 100).toFixed(0),
-                lastUpdate: new Date().toLocaleString('es-ES')
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al cargar estadísticas:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
-// ========== RUTAS ESTÁTICAS ==========
+// IMPORTANTE: Rutas explícitas para los archivos HTML
 app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/login.html');
+    // Intenta primero desde 'public'
+    try {
+        res.sendFile(__dirname + '/public/login.html');
+    } catch (error) {
+        // Si falla, intenta desde la raíz
+        try {
+            res.sendFile(__dirname + '/login.html');
+        } catch {
+            res.status(404).send('Archivo login.html no encontrado');
+        }
+    }
+});
+
+app.get('/login.html', (req, res) => {
+    try {
+        res.sendFile(__dirname + '/public/login.html');
+    } catch {
+        try {
+            res.sendFile(__dirname + '/login.html');
+        } catch {
+            res.status(404).send('Archivo no encontrado');
+        }
+    }
 });
 
 app.get('/dashboard.html', (req, res) => {
-    res.sendFile(__dirname + '/dashboard.html');
+    try {
+        res.sendFile(__dirname + '/public/dashboard.html');
+    } catch {
+        try {
+            res.sendFile(__dirname + '/dashboard.html');
+        } catch {
+            res.status(404).send('Archivo no encontrado');
+        }
+    }
+});
+
+// Ruta catch-all para SPA
+app.get('*', (req, res) => {
+    // Si es una ruta de API, devolver 404
+    if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ 
+            success: false, 
+            message: 'Ruta API no encontrada' 
+        });
+    }
+    
+    // Para cualquier otra ruta, servir login.html
+    try {
+        res.sendFile(__dirname + '/public/login.html');
+    } catch {
+        try {
+            res.sendFile(__dirname + '/login.html');
+        } catch {
+            res.status(404).send('Archivo no encontrado');
+        }
+    }
 });
 
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
     console.log(`🚀 Servidor Cromwell Pay ejecutándose en http://localhost:${PORT}`);
-    console.log(`📧 Correo configurado: ${process.env.EMAIL_USER}`);
+    console.log(`📁 Directorio actual: ${__dirname}`);
+    console.log(`📧 Correo configurado: ${process.env.EMAIL_USER || 'No configurado'}`);
     console.log(`🔐 JWT Secret: ${process.env.JWT_SECRET ? 'Configurado' : 'No configurado'}`);
     console.log(`🗄️  Supabase: ${supabaseUrl ? 'Conectado' : 'No configurado'}`);
+    
+    // Verificar que los archivos existan
+    const fs = require('fs');
+    const path = require('path');
+    
+    const filesToCheck = [
+        { name: 'login.html', path: path.join(__dirname, 'public/login.html') },
+        { name: 'login.html (raíz)', path: path.join(__dirname, 'login.html') },
+        { name: 'dashboard.html', path: path.join(__dirname, 'public/dashboard.html') },
+        { name: 'dashboard.html (raíz)', path: path.join(__dirname, 'dashboard.html') }
+    ];
+    
+    console.log('\n📋 Verificación de archivos:');
+    filesToCheck.forEach(file => {
+        const exists = fs.existsSync(file.path);
+        console.log(`   ${exists ? '✅' : '❌'} ${file.name}: ${exists ? 'ENCONTRADO' : 'NO ENCONTRADO'}`);
+    });
 });
