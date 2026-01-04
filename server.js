@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
@@ -9,16 +10,30 @@ const PORT = process.env.PORT || 3000;
 // ========== CONFIGURACIÓN ==========
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
-app.use(express.static('.'));
 
-// Supabase Client - USAR VARIABLES DE ENTORNO
+// Sirve archivos estáticos desde 'public'
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Redirecciones para rutas sin .html
+app.get('/', (req, res) => res.redirect('/login.html'));
+app.get('/login', (req, res) => res.redirect('/login.html'));
+app.get('/dashboard', (req, res) => res.redirect('/dashboard.html'));
+app.get('/admin', (req, res) => res.redirect('/admin.html'));
+app.get('/register', (req, res) => res.redirect('/register.html'));
+
+// Supabase Client
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY; // Service Role Key para admin
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+    console.error('❌ ERROR: Faltan variables de entorno SUPABASE_URL o SUPABASE_SERVICE_KEY');
+    console.error('   Crea un archivo .env con estas variables');
+    process.exit(1);
+}
+
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ========== FUNCIONES AUXILIARES ==========
-
 function generarIDUsuario() {
     const fecha = Date.now().toString();
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
@@ -57,12 +72,10 @@ const authenticateToken = async (req, res, next) => {
     }
 };
 
-// Middleware para verificar rol de admin
 const requireAdmin = async (req, res, next) => {
     try {
         const user = req.user;
         
-        // Verificar si es admin desde la tabla profiles
         const { data: profile, error } = await supabase
             .from('profiles')
             .select('role')
@@ -87,15 +100,13 @@ const requireAdmin = async (req, res, next) => {
 };
 
 // ========== RUTAS PÚBLICAS ==========
-
-// 1. Estado del servidor
 app.get('/api/status', async (req, res) => {
     try {
         res.json({ 
             success: true, 
             status: '✅ Cromwell Pay - Sistema Funcionando',
             timestamp: new Date().toISOString(),
-            version: '1.0.0',
+            version: '2.0.0',
             auth_type: 'nickname_only'
         });
     } catch (error) {
@@ -106,12 +117,10 @@ app.get('/api/status', async (req, res) => {
     }
 });
 
-// 2. REGISTRO CON NICKNAME
 app.post('/api/register', async (req, res) => {
     try {
         const { nickname, password, termsAccepted } = req.body;
         
-        // Validaciones
         if (!nickname || !password) {
             return res.status(400).json({ 
                 success: false, 
@@ -126,7 +135,6 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Validar formato del nickname
         const nicknameRegex = /^[a-zA-Z0-9_]{3,20}$/;
         if (!nicknameRegex.test(nickname)) {
             return res.status(400).json({ 
@@ -142,7 +150,6 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Verificar si el nickname ya existe en profiles
         const { data: existingProfile } = await supabase
             .from('profiles')
             .select('nickname')
@@ -156,11 +163,9 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Generar un email único basado en el nickname
         const uniqueEmail = `${nickname.toLowerCase()}_${Date.now()}@cromwellpay.local`;
         const userId = generarIDUsuario();
         
-        // Crear usuario en Supabase con email único
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({
             email: uniqueEmail,
             password: password,
@@ -187,7 +192,6 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Insertar en tabla profiles
         const { error: profileError } = await supabase
             .from('profiles')
             .insert({
@@ -204,8 +208,6 @@ app.post('/api/register', async (req, res) => {
             });
         
         if (profileError) {
-            console.error('❌ Error creando perfil:', profileError);
-            // Revertir creación de usuario
             await supabase.auth.admin.deleteUser(authData.user.id);
             return res.status(400).json({ 
                 success: false, 
@@ -215,7 +217,6 @@ app.post('/api/register', async (req, res) => {
         
         console.log(`✅ Usuario registrado: ${nickname} (${userId})`);
         
-        // Crear sesión para el usuario
         const { data: sessionData, error: sessionError } = await supabase.auth.admin.createSession({
             user_id: authData.user.id,
             session_data: {
@@ -257,7 +258,6 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// 3. LOGIN CON NICKNAME
 app.post('/api/login', async (req, res) => {
     try {
         const { nickname, password } = req.body;
@@ -269,7 +269,6 @@ app.post('/api/login', async (req, res) => {
             });
         }
         
-        // Buscar usuario por nickname en profiles
         const { data: profile, error: profileError } = await supabase
             .from('profiles')
             .select('id, nickname')
@@ -284,7 +283,6 @@ app.post('/api/login', async (req, res) => {
             });
         }
         
-        // Obtener el email del usuario desde auth.users
         const { data: { users } } = await supabase.auth.admin.listUsers();
         const targetUser = users.find(u => u.id === profile.id);
         
@@ -296,7 +294,6 @@ app.post('/api/login', async (req, res) => {
             });
         }
         
-        // Intentar login con el email del usuario
         const { data, error } = await supabase.auth.signInWithPassword({
             email: targetUser.email,
             password: password
@@ -310,14 +307,12 @@ app.post('/api/login', async (req, res) => {
             });
         }
         
-        // Obtener datos completos del perfil
         const { data: fullProfile } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', data.user.id)
             .single();
         
-        // ÉXITO
         res.json({
             success: true,
             message: 'Inicio de sesión exitoso',
@@ -348,13 +343,10 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ========== RUTAS PROTEGIDAS ==========
-
-// 4. VERIFICAR TOKEN
 app.get('/api/verify-token', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         
-        // Obtener datos del perfil
         const { data: profile, error } = await supabase
             .from('profiles')
             .select('*')
@@ -395,12 +387,10 @@ app.get('/api/verify-token', authenticateToken, async (req, res) => {
     }
 });
 
-// 5. DASHBOARD - Obtener datos completos del usuario
 app.get('/api/dashboard', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         
-        // Obtener perfil
         const { data: profile, error: profileError } = await supabase
             .from('profiles')
             .select('*')
@@ -414,7 +404,6 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             });
         }
         
-        // Obtener transacciones recientes
         const { data: transactions } = await supabase
             .from('transactions')
             .select('*')
@@ -455,7 +444,6 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
     }
 });
 
-// 6. OBTENER PERFIL DEL USUARIO
 app.get('/api/user/profile', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -497,13 +485,11 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
     }
 });
 
-// 7. ACTUALIZAR PERFIL
 app.put('/api/user/profile', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         const { nickname, phone, province, wallet_address, notifications } = req.body;
         
-        // Validar campos requeridos
         if (!nickname || !phone || !province) {
             return res.status(400).json({ 
                 success: false, 
@@ -511,7 +497,6 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             });
         }
         
-        // Verificar si el nuevo nickname ya existe (excepto para el usuario actual)
         if (nickname.toLowerCase() !== user.user_metadata?.nickname?.toLowerCase()) {
             const { data: existingProfile } = await supabase
                 .from('profiles')
@@ -528,7 +513,6 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             }
         }
         
-        // Actualizar en tabla profiles
         const { error: profileError } = await supabase
             .from('profiles')
             .update({
@@ -545,7 +529,6 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             throw profileError;
         }
         
-        // Actualizar metadata en auth.users
         const { error: authError } = await supabase.auth.updateUser({
             data: {
                 nickname: nickname,
@@ -582,7 +565,6 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
     }
 });
 
-// 8. OBTENER BALANCE
 app.get('/api/user/balance', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -620,7 +602,6 @@ app.get('/api/user/balance', authenticateToken, async (req, res) => {
     }
 });
 
-// 9. CAMBIAR CONTRASEÑA
 app.post('/api/user/change-password', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -647,7 +628,6 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
             });
         }
         
-        // Obtener email del usuario
         const { data: { users } } = await supabase.auth.admin.listUsers();
         const targetUser = users.find(u => u.id === user.id);
         
@@ -658,7 +638,6 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
             });
         }
         
-        // Verificar contraseña actual intentando hacer login
         const { error: loginError } = await supabase.auth.signInWithPassword({
             email: targetUser.email,
             password: currentPassword
@@ -671,7 +650,6 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
             });
         }
         
-        // Actualizar contraseña
         const { error } = await supabase.auth.updateUser({
             password: newPassword
         });
@@ -694,7 +672,6 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
     }
 });
 
-// 10. LOGOUT
 app.post('/api/logout', authenticateToken, async (req, res) => {
     try {
         const { error } = await supabase.auth.signOut();
@@ -718,24 +695,19 @@ app.post('/api/logout', authenticateToken, async (req, res) => {
 });
 
 // ========== RUTAS DE ADMIN ==========
-
-// 11. OBTENER TODOS LOS USUARIOS (admin)
 app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { search = '', page = 1, limit = 20 } = req.query;
         const offset = (page - 1) * limit;
         
-        // Construir query base
         let query = supabase
             .from('profiles')
             .select('*', { count: 'exact' });
         
-        // Aplicar filtro de búsqueda si existe
         if (search) {
             query = query.or(`nickname.ilike.%${search}%,user_id.ilike.%${search}%,phone.ilike.%${search}%`);
         }
         
-        // Paginación y orden
         const { data: users, error, count } = await query
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
@@ -761,14 +733,12 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
     }
 });
 
-// 12. ACTUALIZAR SALDO DE USUARIO (admin)
 app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const adminUser = req.user;
         const { userId } = req.params;
         const { cwt, cws, operation, reason } = req.body;
         
-        // Validar operación
         if (!['add', 'subtract', 'set'].includes(operation)) {
             return res.status(400).json({ 
                 success: false, 
@@ -776,7 +746,6 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
             });
         }
         
-        // Obtener usuario objetivo
         const { data: targetUser, error: userError } = await supabase
             .from('profiles')
             .select('*')
@@ -796,7 +765,6 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
         let newCWT = currentCWT;
         let newCWS = currentCWS;
         
-        // Calcular nuevo balance
         if (operation === 'add') {
             newCWT += parseFloat(cwt) || 0;
             newCWS += parseInt(cws) || 0;
@@ -808,7 +776,6 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
             newCWS = Math.max(parseInt(cws) || 0, 0);
         }
         
-        // Actualizar balance en profiles
         const { error: updateError } = await supabase
             .from('profiles')
             .update({
@@ -822,7 +789,6 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
             throw updateError;
         }
         
-        // Crear transacción de balance
         const { error: transactionError } = await supabase
             .from('transactions')
             .insert({
@@ -842,7 +808,6 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
             console.error('❌ Error creando transacción:', transactionError);
         }
         
-        // Registrar en balance_history
         const { error: historyError } = await supabase
             .from('balance_history')
             .insert({
@@ -889,7 +854,6 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
     }
 });
 
-// 13. CAMBIAR ROL DE USUARIO (admin)
 app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const adminUser = req.user;
@@ -903,7 +867,6 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
             });
         }
         
-        // Obtener usuario objetivo
         const { data: targetUser, error: userError } = await supabase
             .from('profiles')
             .select('*')
@@ -917,7 +880,6 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
             });
         }
         
-        // Actualizar rol
         const { error } = await supabase
             .from('profiles')
             .update({
@@ -930,7 +892,6 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
             throw error;
         }
         
-        // Actualizar metadata en auth
         const { error: authError } = await supabase.auth.admin.updateUserById(
             userId,
             {
@@ -968,12 +929,10 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
     }
 });
 
-// 14. OBTENER DETALLES DE USUARIO ESPECÍFICO (admin)
 app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { userId } = req.params;
         
-        // Obtener perfil del usuario
         const { data: profile, error: profileError } = await supabase
             .from('profiles')
             .select('*')
@@ -987,7 +946,6 @@ app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req,
             });
         }
         
-        // Obtener transacciones del usuario
         const { data: transactions } = await supabase
             .from('transactions')
             .select('*')
@@ -995,7 +953,6 @@ app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req,
             .order('created_at', { ascending: false })
             .limit(20);
         
-        // Obtener historial de balance
         const { data: balanceHistory } = await supabase
             .from('balance_history')
             .select('*')
@@ -1025,8 +982,6 @@ app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req,
 });
 
 // ========== RUTAS PARA TRANSACCIONES ==========
-
-// 15. OBTENER TRANSACCIONES DEL USUARIO
 app.get('/api/user/transactions', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -1038,7 +993,6 @@ app.get('/api/user/transactions', authenticateToken, async (req, res) => {
             .select('*', { count: 'exact' })
             .eq('user_id', user.id);
         
-        // Aplicar filtros
         if (type) query = query.eq('type', type);
         if (status) query = query.eq('status', status);
         if (startDate) query = query.gte('created_at', startDate);
@@ -1052,7 +1006,6 @@ app.get('/api/user/transactions', authenticateToken, async (req, res) => {
             throw error;
         }
         
-        // Obtener balance actual
         const { data: profile } = await supabase
             .from('profiles')
             .select('cwt, cws')
@@ -1080,7 +1033,6 @@ app.get('/api/user/transactions', authenticateToken, async (req, res) => {
     }
 });
 
-// 16. CREAR NUEVA TRANSACCIÓN
 app.post('/api/user/transactions', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -1093,7 +1045,6 @@ app.post('/api/user/transactions', authenticateToken, async (req, res) => {
             });
         }
         
-        // Verificar balance si es retiro
         if (type === 'withdrawal') {
             const { data: profile } = await supabase
                 .from('profiles')
@@ -1110,7 +1061,6 @@ app.post('/api/user/transactions', authenticateToken, async (req, res) => {
             }
         }
         
-        // Crear transacción
         const transactionData = {
             transaction_id: `TXN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             user_id: user.id,
@@ -1148,54 +1098,30 @@ app.post('/api/user/transactions', authenticateToken, async (req, res) => {
     }
 });
 
-// ========== RUTAS PARA ARCHIVOS HTML ==========
-app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/login.html');
-});
-
-app.get('/login.html', (req, res) => {
-    res.sendFile(__dirname + '/login.html');
-});
-
-app.get('/dashboard.html', (req, res) => {
-    res.sendFile(__dirname + '/dashboard.html');
-});
-
-app.get('/admin.html', (req, res) => {
-    res.sendFile(__dirname + '/admin.html');
-});
-
-app.get('/register.html', (req, res) => {
-    res.sendFile(__dirname + '/register.html');
-});
-
 // ========== INICIAR SERVIDOR ==========
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
     console.log(`🚀 Cromwell Pay ejecutándose en http://localhost:${PORT}`);
-    console.log(`🔗 Supabase URL: ${supabaseUrl ? '✅ Configurada' : '❌ Faltante'}`);
-    console.log(`🔑 Service Key: ${supabaseKey ? '✅ Configurada' : '❌ FALTANTE - Configura SUPABASE_SERVICE_KEY en .env'}`);
+    console.log(`📁 Archivos estáticos servidos desde: ${path.join(__dirname, 'public')}`);
     
-    console.log('\n✅ SISTEMA CON NICKNAME:');
-    console.log('   • Registro: Solo nickname y contraseña');
-    console.log('   • Login: Solo nickname y contraseña');
-    console.log('   • NO se requiere email para login');
-    console.log('   • NO hay verificación de email');
-    console.log('   • Cuentas activas inmediatamente');
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+        console.error('\n❌ ADVERTENCIA: Variables de entorno faltantes');
+        console.log('   Crea un archivo .env con:');
+        console.log('   SUPABASE_URL=https://tu-proyecto.supabase.co');
+        console.log('   SUPABASE_SERVICE_KEY=tu-service-role-key');
+        console.log('   PORT=3000');
+    } else {
+        console.log('\n✅ Variables de entorno configuradas correctamente');
+    }
     
-    console.log('\n📁 ARCHIVOS REQUERIDOS en la raíz del proyecto:');
-    console.log('   • login.html (página de inicio de sesión)');
-    console.log('   • register.html (página de registro)');
-    console.log('   • dashboard.html (panel de usuario)');
-    console.log('   • admin.html (panel de administrador)');
+    console.log('\n🌐 URLs disponibles:');
+    console.log(`   • Login: http://localhost:${PORT}/login.html`);
+    console.log(`   • Registro: http://localhost:${PORT}/register.html`);
+    console.log(`   • Dashboard: http://localhost:${PORT}/dashboard.html`);
+    console.log(`   • Admin: http://localhost:${PORT}/admin.html`);
     
-    console.log('\n⚠️  CONFIGURACIÓN REQUERIDA:');
-    console.log('   1. Crea un archivo .env con:');
-    console.log('      SUPABASE_URL=https://tu-proyecto.supabase.co');
-    console.log('      SUPABASE_SERVICE_KEY=tu-service-role-key');
-    console.log('      PORT=3000');
-    
-    console.log('\n   2. Ejecuta las tablas SQL en Supabase');
-    console.log('   3. Crea el usuario admin con el SQL proporcionado');
-    
-    console.log('\n📋 SISTEMA LISTO PARA USAR');
+    console.log('\n🔧 Endpoints API:');
+    console.log('   • POST /api/register - Registrar usuario');
+    console.log('   • POST /api/login - Iniciar sesión');
+    console.log('   • GET  /api/dashboard - Panel de usuario');
+    console.log('   • GET  /api/admin/users - Panel de administración');
 });
