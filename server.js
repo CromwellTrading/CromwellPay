@@ -12,9 +12,9 @@ app.use(express.json());
 app.use(express.static('public'));
 app.use(express.static('.'));
 
-// Supabase Client
+// Supabase Client - USAR VARIABLES DE ENTORNO
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY; // Service Role Key para admin
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ========== FUNCIONES AUXILIARES ==========
@@ -57,18 +57,46 @@ const authenticateToken = async (req, res, next) => {
     }
 };
 
+// Middleware para verificar rol de admin
+const requireAdmin = async (req, res, next) => {
+    try {
+        const user = req.user;
+        
+        // Verificar si es admin desde la tabla profiles
+        const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single();
+        
+        if (error || !profile || profile.role !== 'admin') {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Acceso denegado. Se requieren permisos de administrador.' 
+            });
+        }
+        
+        next();
+    } catch (error) {
+        console.error('Error verificando admin:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error verificando permisos' 
+        });
+    }
+};
+
 // ========== RUTAS PÚBLICAS ==========
 
 // 1. Estado del servidor
 app.get('/api/status', async (req, res) => {
     try {
-        const { data, error } = await supabase.auth.getUser();
-        
         res.json({ 
             success: true, 
             status: '✅ Cromwell Pay - Sistema Funcionando',
             timestamp: new Date().toISOString(),
-            version: '1.0.0'
+            version: '1.0.0',
+            auth_type: 'nickname_only'
         });
     } catch (error) {
         res.status(500).json({ 
@@ -114,13 +142,14 @@ app.post('/api/register', async (req, res) => {
             });
         }
         
-        // Verificar si el nickname ya existe
-        const { data: { users } } = await supabase.auth.admin.listUsers();
-        const userExistsByNickname = users.find(u => 
-            u.user_metadata?.nickname?.toLowerCase() === nickname.toLowerCase()
-        );
+        // Verificar si el nickname ya existe en profiles
+        const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('nickname')
+            .eq('nickname', nickname.toLowerCase())
+            .single();
         
-        if (userExistsByNickname) {
+        if (existingProfile) {
             return res.status(400).json({ 
                 success: false, 
                 message: 'El nickname ya está en uso' 
@@ -128,7 +157,6 @@ app.post('/api/register', async (req, res) => {
         }
         
         // Generar un email único basado en el nickname
-        // Usamos un dominio ficticio para evitar problemas con emails reales
         const uniqueEmail = `${nickname.toLowerCase()}_${Date.now()}@cromwellpay.local`;
         const userId = generarIDUsuario();
         
@@ -136,7 +164,7 @@ app.post('/api/register', async (req, res) => {
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({
             email: uniqueEmail,
             password: password,
-            email_confirm: true, // Confirmamos automáticamente
+            email_confirm: true,
             user_metadata: {
                 nickname: nickname,
                 user_id: userId,
@@ -147,7 +175,6 @@ app.post('/api/register', async (req, res) => {
                 province: '',
                 wallet_address: '',
                 notifications: true,
-                email_verified: true, // Sin verificación de email
                 created_at: new Date().toISOString()
             }
         });
@@ -157,6 +184,32 @@ app.post('/api/register', async (req, res) => {
             return res.status(400).json({ 
                 success: false, 
                 message: authError.message 
+            });
+        }
+        
+        // Insertar en tabla profiles
+        const { error: profileError } = await supabase
+            .from('profiles')
+            .insert({
+                id: authData.user.id,
+                nickname: nickname,
+                user_id: userId,
+                role: 'user',
+                cwt: 0,
+                cws: 0,
+                phone: '',
+                province: '',
+                wallet_address: '',
+                notifications: true
+            });
+        
+        if (profileError) {
+            console.error('❌ Error creando perfil:', profileError);
+            // Revertir creación de usuario
+            await supabase.auth.admin.deleteUser(authData.user.id);
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Error creando perfil de usuario' 
             });
         }
         
@@ -183,7 +236,6 @@ app.post('/api/register', async (req, res) => {
                 id: authData.user?.id,
                 nickname: nickname,
                 user_id: userId,
-                email: uniqueEmail, // Solo para referencia interna
                 role: 'user',
                 verified: true,
                 cwt: 0,
@@ -193,8 +245,7 @@ app.post('/api/register', async (req, res) => {
                 wallet_address: '',
                 notifications: true,
                 created_at: new Date().toISOString()
-            },
-            note: 'Tu cuenta ha sido creada exitosamente. No necesitas verificar email.'
+            }
         });
         
     } catch (error) {
@@ -218,14 +269,27 @@ app.post('/api/login', async (req, res) => {
             });
         }
         
-        // Buscar usuario por nickname
+        // Buscar usuario por nickname en profiles
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('id, nickname')
+            .eq('nickname', nickname)
+            .single();
+        
+        if (profileError || !profile) {
+            console.error('❌ Usuario no encontrado:', nickname);
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Nickname o contraseña incorrectos' 
+            });
+        }
+        
+        // Obtener el email del usuario desde auth.users
         const { data: { users } } = await supabase.auth.admin.listUsers();
-        const targetUser = users.find(u => 
-            u.user_metadata?.nickname?.toLowerCase() === nickname.toLowerCase()
-        );
+        const targetUser = users.find(u => u.id === profile.id);
         
         if (!targetUser) {
-            console.error('❌ Usuario no encontrado:', nickname);
+            console.error('❌ Usuario no encontrado en auth:', nickname);
             return res.status(401).json({ 
                 success: false, 
                 message: 'Nickname o contraseña incorrectos' 
@@ -246,6 +310,13 @@ app.post('/api/login', async (req, res) => {
             });
         }
         
+        // Obtener datos completos del perfil
+        const { data: fullProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', data.user.id)
+            .single();
+        
         // ÉXITO
         res.json({
             success: true,
@@ -253,18 +324,17 @@ app.post('/api/login', async (req, res) => {
             token: data.session.access_token,
             user: {
                 id: data.user.id,
-                nickname: data.user.user_metadata?.nickname || nickname,
-                user_id: data.user.user_metadata?.user_id || generarIDUsuario(),
-                email: data.user.email, // Solo para referencia interna
-                role: data.user.user_metadata?.role || 'user',
+                nickname: fullProfile.nickname,
+                user_id: fullProfile.user_id,
+                role: fullProfile.role,
                 verified: true,
-                cwt: data.user.user_metadata?.cwt || 0,
-                cws: data.user.user_metadata?.cws || 0,
-                phone: data.user.user_metadata?.phone || '',
-                province: data.user.user_metadata?.province || '',
-                wallet_address: data.user.user_metadata?.wallet_address || '',
-                notifications: data.user.user_metadata?.notifications !== false,
-                created_at: data.user.user_metadata?.created_at || data.user.created_at
+                cwt: fullProfile.cwt,
+                cws: fullProfile.cws,
+                phone: fullProfile.phone || '',
+                province: fullProfile.province || '',
+                wallet_address: fullProfile.wallet_address || '',
+                notifications: fullProfile.notifications !== false,
+                created_at: fullProfile.created_at
             }
         });
         
@@ -284,22 +354,35 @@ app.get('/api/verify-token', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         
+        // Obtener datos del perfil
+        const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+        
+        if (error || !profile) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Perfil no encontrado' 
+            });
+        }
+        
         res.json({
             success: true,
             user: {
                 id: user.id,
-                nickname: user.user_metadata?.nickname || 'Usuario',
-                user_id: user.user_metadata?.user_id || generarIDUsuario(),
-                email: user.email, // Solo para referencia interna
-                role: user.user_metadata?.role || 'user',
+                nickname: profile.nickname,
+                user_id: profile.user_id,
+                role: profile.role,
                 verified: true,
-                cwt: user.user_metadata?.cwt || 0,
-                cws: user.user_metadata?.cws || 0,
-                phone: user.user_metadata?.phone || '',
-                province: user.user_metadata?.province || '',
-                wallet_address: user.user_metadata?.wallet_address || '',
-                notifications: user.user_metadata?.notifications !== false,
-                created_at: user.user_metadata?.created_at || user.created_at
+                cwt: profile.cwt,
+                cws: profile.cws,
+                phone: profile.phone || '',
+                province: profile.province || '',
+                wallet_address: profile.wallet_address || '',
+                notifications: profile.notifications !== false,
+                created_at: profile.created_at
             }
         });
         
@@ -317,27 +400,48 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         
+        // Obtener perfil
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+        
+        if (profileError || !profile) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Perfil no encontrado' 
+            });
+        }
+        
+        // Obtener transacciones recientes
+        const { data: transactions } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(5);
+        
         res.json({
             success: true,
             user: {
                 id: user.id,
-                nickname: user.user_metadata?.nickname || 'Usuario',
-                user_id: user.user_metadata?.user_id || generarIDUsuario(),
-                email: user.email,
-                role: user.user_metadata?.role || 'user',
-                verified: true,
-                cwt: user.user_metadata?.cwt || 0,
-                cws: user.user_metadata?.cws || 0,
-                phone: user.user_metadata?.phone || '',
-                province: user.user_metadata?.province || '',
-                wallet_address: user.user_metadata?.wallet_address || '',
-                notifications: user.user_metadata?.notifications !== false,
-                created_at: user.user_metadata?.created_at || user.created_at
+                nickname: profile.nickname,
+                user_id: profile.user_id,
+                role: profile.role,
+                cwt: profile.cwt,
+                cws: profile.cws,
+                phone: profile.phone || '',
+                province: profile.province || '',
+                wallet_address: profile.wallet_address || '',
+                notifications: profile.notifications !== false,
+                created_at: profile.created_at
             },
             dashboard: {
-                total_balance: (user.user_metadata?.cwt || 0) + (user.user_metadata?.cws || 0),
-                transactions_today: 0,
-                pending_transactions: 0,
+                total_balance: (profile.cwt || 0) + (profile.cws || 0),
+                total_cwt: profile.cwt,
+                total_cws: profile.cws,
+                recent_transactions: transactions || [],
                 last_login: new Date().toISOString()
             }
         });
@@ -356,18 +460,31 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         
+        const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+        
+        if (error || !profile) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Perfil no encontrado' 
+            });
+        }
+        
         res.json({
             success: true,
             profile: {
                 id: user.id,
-                nickname: user.user_metadata?.nickname || 'Usuario',
-                user_id: user.user_metadata?.user_id || generarIDUsuario(),
-                phone: user.user_metadata?.phone || '',
-                province: user.user_metadata?.province || '',
-                wallet_address: user.user_metadata?.wallet_address || '',
-                notifications: user.user_metadata?.notifications !== false,
-                created_at: user.user_metadata?.created_at || user.created_at,
-                last_updated: user.updated_at
+                nickname: profile.nickname,
+                user_id: profile.user_id,
+                phone: profile.phone || '',
+                province: profile.province || '',
+                wallet_address: profile.wallet_address || '',
+                notifications: profile.notifications !== false,
+                created_at: profile.created_at,
+                updated_at: profile.updated_at
             }
         });
         
@@ -395,14 +512,15 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
         }
         
         // Verificar si el nuevo nickname ya existe (excepto para el usuario actual)
-        if (nickname !== user.user_metadata?.nickname) {
-            const { data: { users } } = await supabase.auth.admin.listUsers();
-            const nicknameExists = users.find(u => 
-                u.id !== user.id && 
-                u.user_metadata?.nickname?.toLowerCase() === nickname.toLowerCase()
-            );
+        if (nickname.toLowerCase() !== user.user_metadata?.nickname?.toLowerCase()) {
+            const { data: existingProfile } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('nickname', nickname.toLowerCase())
+                .neq('id', user.id)
+                .single();
             
-            if (nicknameExists) {
+            if (existingProfile) {
                 return res.status(400).json({ 
                     success: false, 
                     message: 'El nickname ya está en uso por otro usuario' 
@@ -410,19 +528,36 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             }
         }
         
-        // Actualizar usuario en Supabase
-        const { error } = await supabase.auth.updateUser({
+        // Actualizar en tabla profiles
+        const { error: profileError } = await supabase
+            .from('profiles')
+            .update({
+                nickname: nickname,
+                phone: phone,
+                province: province,
+                wallet_address: wallet_address || '',
+                notifications: notifications !== false,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', user.id);
+        
+        if (profileError) {
+            throw profileError;
+        }
+        
+        // Actualizar metadata en auth.users
+        const { error: authError } = await supabase.auth.updateUser({
             data: {
-                nickname,
-                phone,
-                province,
+                nickname: nickname,
+                phone: phone,
+                province: province,
                 wallet_address: wallet_address || '',
                 notifications: notifications !== false
             }
         });
         
-        if (error) {
-            throw error;
+        if (authError) {
+            console.warn('⚠️ Error actualizando auth metadata:', authError.message);
         }
         
         res.json({
@@ -452,12 +587,25 @@ app.get('/api/user/balance', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         
+        const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('cwt, cws')
+            .eq('id', user.id)
+            .single();
+        
+        if (error || !profile) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Perfil no encontrado' 
+            });
+        }
+        
         res.json({
             success: true,
             balance: {
-                cwt: user.user_metadata?.cwt || 0,
-                cws: user.user_metadata?.cws || 0,
-                total: (user.user_metadata?.cwt || 0) + (user.user_metadata?.cws || 0),
+                cwt: profile.cwt || 0,
+                cws: profile.cws || 0,
+                total: (profile.cwt || 0) + (profile.cws || 0),
                 currency: 'USD',
                 last_updated: new Date().toISOString()
             }
@@ -499,9 +647,20 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
             });
         }
         
+        // Obtener email del usuario
+        const { data: { users } } = await supabase.auth.admin.listUsers();
+        const targetUser = users.find(u => u.id === user.id);
+        
+        if (!targetUser) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Usuario no encontrado' 
+            });
+        }
+        
         // Verificar contraseña actual intentando hacer login
         const { error: loginError } = await supabase.auth.signInWithPassword({
-            email: user.email,
+            email: targetUser.email,
             password: currentPassword
         });
         
@@ -558,44 +717,39 @@ app.post('/api/logout', authenticateToken, async (req, res) => {
     }
 });
 
-// ========== ADMIN ROUTES ==========
+// ========== RUTAS DE ADMIN ==========
 
 // 11. OBTENER TODOS LOS USUARIOS (admin)
-app.get('/api/admin/users', authenticateToken, async (req, res) => {
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const user = req.user;
+        const { search = '', page = 1, limit = 20 } = req.query;
+        const offset = (page - 1) * limit;
         
-        if (user.user_metadata?.role !== 'admin') {
-            return res.status(403).json({ 
-                success: false, 
-                message: 'Acceso denegado. Solo administradores.' 
-            });
+        // Construir query base
+        let query = supabase
+            .from('profiles')
+            .select('*', { count: 'exact' });
+        
+        // Aplicar filtro de búsqueda si existe
+        if (search) {
+            query = query.or(`nickname.ilike.%${search}%,user_id.ilike.%${search}%,phone.ilike.%${search}%`);
         }
         
-        const { data: { users }, error } = await supabase.auth.admin.listUsers();
+        // Paginación y orden
+        const { data: users, error, count } = await query
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
         
         if (error) {
             throw error;
         }
         
-        const usuariosFormateados = users.map(u => ({
-            id: u.id,
-            nickname: u.user_metadata?.nickname || 'Sin nickname',
-            user_id: u.user_metadata?.user_id || 'N/A',
-            cwt: u.user_metadata?.cwt || 0,
-            cws: u.user_metadata?.cws || 0,
-            role: u.user_metadata?.role || 'user',
-            phone: u.user_metadata?.phone || '',
-            province: u.user_metadata?.province || '',
-            wallet_address: u.user_metadata?.wallet_address || '',
-            created_at: u.created_at,
-            last_sign_in: u.last_sign_in_at
-        }));
-        
         res.json({
             success: true,
-            total_users: usuariosFormateados.length,
-            users: usuariosFormateados
+            total_users: count || 0,
+            current_page: parseInt(page),
+            total_pages: Math.ceil((count || 0) / limit),
+            users: users || []
         });
         
     } catch (error) {
@@ -608,21 +762,26 @@ app.get('/api/admin/users', authenticateToken, async (req, res) => {
 });
 
 // 12. ACTUALIZAR SALDO DE USUARIO (admin)
-app.put('/api/admin/users/:userId/balance', authenticateToken, async (req, res) => {
+app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const adminUser = req.user;
         const { userId } = req.params;
         const { cwt, cws, operation, reason } = req.body;
         
-        if (adminUser.user_metadata?.role !== 'admin') {
-            return res.status(403).json({ 
+        // Validar operación
+        if (!['add', 'subtract', 'set'].includes(operation)) {
+            return res.status(400).json({ 
                 success: false, 
-                message: 'Acceso denegado. Solo administradores.' 
+                message: 'Operación no válida. Use: add, subtract o set' 
             });
         }
         
         // Obtener usuario objetivo
-        const { data: { user: targetUser }, error: userError } = await supabase.auth.admin.getUserById(userId);
+        const { data: targetUser, error: userError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .single();
         
         if (userError || !targetUser) {
             return res.status(404).json({ 
@@ -631,41 +790,76 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, async (req, res) 
             });
         }
         
-        const currentCWT = targetUser.user_metadata?.cwt || 0;
-        const currentCWS = targetUser.user_metadata?.cws || 0;
+        const currentCWT = targetUser.cwt || 0;
+        const currentCWS = targetUser.cws || 0;
         
         let newCWT = currentCWT;
         let newCWS = currentCWS;
         
+        // Calcular nuevo balance
         if (operation === 'add') {
             newCWT += parseFloat(cwt) || 0;
             newCWS += parseInt(cws) || 0;
         } else if (operation === 'subtract') {
-            newCWT -= parseFloat(cwt) || 0;
-            newCWS -= parseInt(cws) || 0;
+            newCWT = Math.max(currentCWT - (parseFloat(cwt) || 0), 0);
+            newCWS = Math.max(currentCWS - (parseInt(cws) || 0), 0);
         } else {
-            newCWT = parseFloat(cwt) || 0;
-            newCWS = parseInt(cws) || 0;
+            newCWT = Math.max(parseFloat(cwt) || 0, 0);
+            newCWS = Math.max(parseInt(cws) || 0, 0);
         }
         
-        // Asegurar que no sean negativos
-        if (newCWT < 0) newCWT = 0;
-        if (newCWS < 0) newCWS = 0;
+        // Actualizar balance en profiles
+        const { error: updateError } = await supabase
+            .from('profiles')
+            .update({
+                cwt: newCWT,
+                cws: newCWS,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', userId);
         
-        // Actualizar usuario
-        const { error } = await supabase.auth.admin.updateUserById(
-            userId,
-            {
-                user_metadata: {
-                    ...targetUser.user_metadata,
-                    cwt: newCWT,
-                    cws: newCWS
-                }
-            }
-        );
+        if (updateError) {
+            throw updateError;
+        }
         
-        if (error) {
-            throw error;
+        // Crear transacción de balance
+        const { error: transactionError } = await supabase
+            .from('transactions')
+            .insert({
+                transaction_id: `ADMIN-${Date.now()}`,
+                user_id: userId,
+                type: `admin_${operation}`,
+                status: 'completed',
+                amount_cwt: operation === 'set' ? newCWT - currentCWT : parseFloat(cwt) || 0,
+                amount_cws: operation === 'set' ? newCWS - currentCWS : parseInt(cws) || 0,
+                description: reason || 'Actualización administrativa de balance',
+                admin_id: adminUser.id,
+                created_at: new Date().toISOString(),
+                completed_at: new Date().toISOString()
+            });
+        
+        if (transactionError) {
+            console.error('❌ Error creando transacción:', transactionError);
+        }
+        
+        // Registrar en balance_history
+        const { error: historyError } = await supabase
+            .from('balance_history')
+            .insert({
+                user_id: userId,
+                previous_cwt: currentCWT,
+                previous_cws: currentCWS,
+                new_cwt: newCWT,
+                new_cws: newCWS,
+                operation: operation,
+                source: 'admin',
+                admin_id: adminUser.id,
+                reason: reason || 'Actualización administrativa',
+                created_at: new Date().toISOString()
+            });
+        
+        if (historyError) {
+            console.error('❌ Error registrando historial:', historyError);
         }
         
         res.json({
@@ -673,7 +867,8 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, async (req, res) 
             message: 'Balance actualizado correctamente',
             user: {
                 id: targetUser.id,
-                nickname: targetUser.user_metadata?.nickname || 'Usuario',
+                nickname: targetUser.nickname,
+                user_id: targetUser.user_id,
                 balance: {
                     previous: { cwt: currentCWT, cws: currentCWS },
                     current: { cwt: newCWT, cws: newCWS },
@@ -695,18 +890,11 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, async (req, res) 
 });
 
 // 13. CAMBIAR ROL DE USUARIO (admin)
-app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => {
+app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const adminUser = req.user;
         const { userId } = req.params;
         const { role } = req.body;
-        
-        if (adminUser.user_metadata?.role !== 'admin') {
-            return res.status(403).json({ 
-                success: false, 
-                message: 'Acceso denegado. Solo administradores.' 
-            });
-        }
         
         if (!['admin', 'user', 'moderator'].includes(role)) {
             return res.status(400).json({ 
@@ -716,7 +904,11 @@ app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => 
         }
         
         // Obtener usuario objetivo
-        const { data: { user: targetUser }, error: userError } = await supabase.auth.admin.getUserById(userId);
+        const { data: targetUser, error: userError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .single();
         
         if (userError || !targetUser) {
             return res.status(404).json({ 
@@ -726,7 +918,20 @@ app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => 
         }
         
         // Actualizar rol
-        const { error } = await supabase.auth.admin.updateUserById(
+        const { error } = await supabase
+            .from('profiles')
+            .update({
+                role: role,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', userId);
+        
+        if (error) {
+            throw error;
+        }
+        
+        // Actualizar metadata en auth
+        const { error: authError } = await supabase.auth.admin.updateUserById(
             userId,
             {
                 user_metadata: {
@@ -736,8 +941,8 @@ app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => 
             }
         );
         
-        if (error) {
-            throw error;
+        if (authError) {
+            console.warn('⚠️ Error actualizando auth metadata:', authError.message);
         }
         
         res.json({
@@ -745,8 +950,9 @@ app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => 
             message: `Rol actualizado a ${role}`,
             user: {
                 id: targetUser.id,
-                nickname: targetUser.user_metadata?.nickname || 'Usuario',
-                previous_role: targetUser.user_metadata?.role || 'user',
+                nickname: targetUser.nickname,
+                user_id: targetUser.user_id,
+                previous_role: targetUser.role,
                 new_role: role,
                 updated_by: adminUser.user_metadata?.nickname || adminUser.email,
                 timestamp: new Date().toISOString()
@@ -762,49 +968,179 @@ app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => 
     }
 });
 
-// ========== RUTAS PARA TRANSACCIONES ==========
-
-// 14. OBTENER TRANSACCIONES DEL USUARIO
-app.get('/api/user/transactions', authenticateToken, async (req, res) => {
+// 14. OBTENER DETALLES DE USUARIO ESPECÍFICO (admin)
+app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const user = req.user;
+        const { userId } = req.params;
         
-        // En un sistema real, esto vendría de una base de datos de transacciones
-        // Por ahora, devolvemos datos de ejemplo
+        // Obtener perfil del usuario
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .single();
         
-        const transactions = [
-            {
-                id: 'TXN-001',
-                type: 'deposit',
-                amount: 100,
-                currency: 'CWT',
-                status: 'completed',
-                date: new Date().toISOString(),
-                description: 'Depósito inicial'
-            },
-            {
-                id: 'TXN-002',
-                type: 'withdrawal',
-                amount: 50,
-                currency: 'CWS',
-                status: 'pending',
-                date: new Date(Date.now() - 86400000).toISOString(),
-                description: 'Retiro de tokens'
-            }
-        ];
+        if (profileError || !profile) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Usuario no encontrado' 
+            });
+        }
+        
+        // Obtener transacciones del usuario
+        const { data: transactions } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(20);
+        
+        // Obtener historial de balance
+        const { data: balanceHistory } = await supabase
+            .from('balance_history')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(10);
         
         res.json({
             success: true,
-            transactions: transactions,
-            total: transactions.length,
+            user: profile,
+            transactions: transactions || [],
+            balance_history: balanceHistory || [],
+            statistics: {
+                total_transactions: transactions?.length || 0,
+                total_deposits: transactions?.filter(t => t.type.includes('deposit')).length || 0,
+                total_withdrawals: transactions?.filter(t => t.type.includes('withdrawal')).length || 0
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error obteniendo detalles de usuario:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error interno del servidor' 
+        });
+    }
+});
+
+// ========== RUTAS PARA TRANSACCIONES ==========
+
+// 15. OBTENER TRANSACCIONES DEL USUARIO
+app.get('/api/user/transactions', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        const { type, status, startDate, endDate, page = 1, limit = 20 } = req.query;
+        const offset = (page - 1) * limit;
+        
+        let query = supabase
+            .from('transactions')
+            .select('*', { count: 'exact' })
+            .eq('user_id', user.id);
+        
+        // Aplicar filtros
+        if (type) query = query.eq('type', type);
+        if (status) query = query.eq('status', status);
+        if (startDate) query = query.gte('created_at', startDate);
+        if (endDate) query = query.lte('created_at', endDate);
+        
+        const { data: transactions, error, count } = await query
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) {
+            throw error;
+        }
+        
+        // Obtener balance actual
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('cwt, cws')
+            .eq('id', user.id)
+            .single();
+        
+        res.json({
+            success: true,
+            transactions: transactions || [],
+            total: count || 0,
+            current_page: parseInt(page),
+            total_pages: Math.ceil((count || 0) / limit),
             balance: {
-                cwt: user.user_metadata?.cwt || 0,
-                cws: user.user_metadata?.cws || 0
+                cwt: profile?.cwt || 0,
+                cws: profile?.cws || 0
             }
         });
         
     } catch (error) {
         console.error('❌ Error obteniendo transacciones:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error interno del servidor' 
+        });
+    }
+});
+
+// 16. CREAR NUEVA TRANSACCIÓN
+app.post('/api/user/transactions', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        const { type, amount_cwt, amount_cws, description, metadata } = req.body;
+        
+        if (!type || (!amount_cwt && !amount_cws)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Tipo y monto son requeridos' 
+            });
+        }
+        
+        // Verificar balance si es retiro
+        if (type === 'withdrawal') {
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('cwt, cws')
+                .eq('id', user.id)
+                .single();
+            
+            if ((amount_cwt && profile.cwt < amount_cwt) || 
+                (amount_cws && profile.cws < amount_cws)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Balance insuficiente' 
+                });
+            }
+        }
+        
+        // Crear transacción
+        const transactionData = {
+            transaction_id: `TXN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            user_id: user.id,
+            type: type,
+            status: 'pending',
+            amount_cwt: parseFloat(amount_cwt) || 0,
+            amount_cws: parseInt(amount_cws) || 0,
+            description: description || '',
+            metadata: metadata || {},
+            created_at: new Date().toISOString()
+        };
+        
+        const { data: transaction, error } = await supabase
+            .from('transactions')
+            .insert(transactionData)
+            .select()
+            .single();
+        
+        if (error) {
+            throw error;
+        }
+        
+        res.json({
+            success: true,
+            message: 'Transacción creada exitosamente',
+            transaction: transaction
+        });
+        
+    } catch (error) {
+        console.error('❌ Error creando transacción:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -829,48 +1165,37 @@ app.get('/admin.html', (req, res) => {
     res.sendFile(__dirname + '/admin.html');
 });
 
-// Eliminar verify-email.html ya que no lo necesitamos más
-app.get('/verify-email.html', (req, res) => {
-    res.redirect('/login.html');
+app.get('/register.html', (req, res) => {
+    res.sendFile(__dirname + '/register.html');
 });
 
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, async () => {
     console.log(`🚀 Cromwell Pay ejecutándose en http://localhost:${PORT}`);
-    console.log(`🔗 Supabase: ${supabaseUrl}`);
+    console.log(`🔗 Supabase URL: ${supabaseUrl ? '✅ Configurada' : '❌ Faltante'}`);
+    console.log(`🔑 Service Key: ${supabaseKey ? '✅ Configurada' : '❌ FALTANTE - Configura SUPABASE_SERVICE_KEY en .env'}`);
     
-    console.log('\n✅ SISTEMA SIMPLIFICADO CON NICKNAME:');
+    console.log('\n✅ SISTEMA CON NICKNAME:');
     console.log('   • Registro: Solo nickname y contraseña');
     console.log('   • Login: Solo nickname y contraseña');
-    console.log('   • NO se requiere email');
+    console.log('   • NO se requiere email para login');
     console.log('   • NO hay verificación de email');
     console.log('   • Cuentas activas inmediatamente');
     
-    console.log('\n✅ ENDPOINTS DISPONIBLES:');
-    console.log('   PÚBLICOS:');
-    console.log('   • GET  /api/status');
-    console.log('   • POST /api/register');
-    console.log('   • POST /api/login');
+    console.log('\n📁 ARCHIVOS REQUERIDOS en la raíz del proyecto:');
+    console.log('   • login.html (página de inicio de sesión)');
+    console.log('   • register.html (página de registro)');
+    console.log('   • dashboard.html (panel de usuario)');
+    console.log('   • admin.html (panel de administrador)');
     
-    console.log('\n   PROTEGIDOS:');
-    console.log('   • GET  /api/verify-token');
-    console.log('   • GET  /api/dashboard');
-    console.log('   • GET  /api/user/profile');
-    console.log('   • PUT  /api/user/profile');
-    console.log('   • GET  /api/user/balance');
-    console.log('   • POST /api/user/change-password');
-    console.log('   • GET  /api/user/transactions');
-    console.log('   • POST /api/logout');
+    console.log('\n⚠️  CONFIGURACIÓN REQUERIDA:');
+    console.log('   1. Crea un archivo .env con:');
+    console.log('      SUPABASE_URL=https://tu-proyecto.supabase.co');
+    console.log('      SUPABASE_SERVICE_KEY=tu-service-role-key');
+    console.log('      PORT=3000');
     
-    console.log('\n   ADMIN:');
-    console.log('   • GET  /api/admin/users');
-    console.log('   • PUT  /api/admin/users/:userId/balance');
-    console.log('   • PUT  /api/admin/users/:userId/role');
+    console.log('\n   2. Ejecuta las tablas SQL en Supabase');
+    console.log('   3. Crea el usuario admin con el SQL proporcionado');
     
-    console.log('\n📋 SISTEMA LISTO:');
-    console.log('   • Usuarios se registran solo con nickname');
-    console.log('   • No hay problemas con emails incorrectos');
-    console.log('   • Login inmediato después del registro');
-    console.log('   • Dashboard completo');
-    console.log('   • Gestión de tokens CWT/CWS');
+    console.log('\n📋 SISTEMA LISTO PARA USAR');
 });
