@@ -11,26 +11,28 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Sirve archivos estáticos desde 'public'
+// Archivos estáticos desde 'public'
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Redirecciones para rutas sin .html
+// Redirecciones amigables
 app.get('/', (req, res) => res.redirect('/login.html'));
 app.get('/login', (req, res) => res.redirect('/login.html'));
 app.get('/dashboard', (req, res) => res.redirect('/dashboard.html'));
 app.get('/admin', (req, res) => res.redirect('/admin.html'));
 app.get('/register', (req, res) => res.redirect('/register.html'));
 
-// Supabase Client
+// ========== VERIFICACIÓN DE VARIABLES CRÍTICAS ==========
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-    console.error('❌ ERROR: Faltan variables de entorno SUPABASE_URL o SUPABASE_SERVICE_KEY');
+    console.error('❌ ERROR CRÍTICO: Faltan variables de entorno');
+    console.error('   SUPABASE_URL y SUPABASE_SERVICE_KEY son requeridas');
     console.error('   Crea un archivo .env con estas variables');
     process.exit(1);
 }
 
+// Cliente Supabase con Service Role Key
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ========== FUNCIONES AUXILIARES ==========
@@ -40,7 +42,7 @@ function generarIDUsuario() {
     return `CROM-${fecha.slice(-6)}${random}`;
 }
 
-// ========== MIDDLEWARE DE AUTENTICACIÓN ==========
+// ========== MIDDLEWARE DE SEGURIDAD ==========
 const authenticateToken = async (req, res, next) => {
     try {
         const token = req.headers['authorization']?.split(' ')[1];
@@ -64,7 +66,7 @@ const authenticateToken = async (req, res, next) => {
         req.user = user;
         next();
     } catch (error) {
-        console.error('Error en autenticación:', error);
+        console.error('❌ Error en autenticación:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error de autenticación' 
@@ -72,26 +74,37 @@ const authenticateToken = async (req, res, next) => {
     }
 };
 
+// Middleware para ADMIN EXCLUSIVO (solo Ersatz)
 const requireAdmin = async (req, res, next) => {
     try {
         const user = req.user;
         
+        // Verificar en la tabla profiles
         const { data: profile, error } = await supabase
             .from('profiles')
-            .select('role')
+            .select('role, nickname')
             .eq('id', user.id)
             .single();
         
-        if (error || !profile || profile.role !== 'admin') {
+        if (error || !profile) {
             return res.status(403).json({ 
                 success: false, 
-                message: 'Acceso denegado. Se requieren permisos de administrador.' 
+                message: 'Perfil no encontrado' 
+            });
+        }
+        
+        // SOLO Ersatz puede ser admin
+        if (profile.role !== 'admin' || profile.nickname !== 'Ersatz') {
+            console.warn(`⚠️ Intento de acceso admin no autorizado: ${profile.nickname}`);
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Acceso denegado. Solo el administrador principal puede acceder.' 
             });
         }
         
         next();
     } catch (error) {
-        console.error('Error verificando admin:', error);
+        console.error('❌ Error verificando admin:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error verificando permisos' 
@@ -100,14 +113,17 @@ const requireAdmin = async (req, res, next) => {
 };
 
 // ========== RUTAS PÚBLICAS ==========
+
+// Estado del sistema
 app.get('/api/status', async (req, res) => {
     try {
         res.json({ 
             success: true, 
-            status: '✅ Cromwell Pay - Sistema Funcionando',
+            status: '✅ Cromwell Pay - Sistema Seguro Funcionando',
             timestamp: new Date().toISOString(),
-            version: '2.0.0',
-            auth_type: 'nickname_only'
+            version: '3.0.0',
+            security: 'auth_by_nickname',
+            admin: 'Ersatz'
         });
     } catch (error) {
         res.status(500).json({ 
@@ -117,10 +133,12 @@ app.get('/api/status', async (req, res) => {
     }
 });
 
+// REGISTRO SEGURO
 app.post('/api/register', async (req, res) => {
     try {
         const { nickname, password, termsAccepted } = req.body;
         
+        // Validaciones estrictas
         if (!nickname || !password) {
             return res.status(400).json({ 
                 success: false, 
@@ -139,33 +157,38 @@ app.post('/api/register', async (req, res) => {
         if (!nicknameRegex.test(nickname)) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'El nickname solo puede contener letras, números y guiones bajos (3-20 caracteres)' 
+                message: 'Nickname inválido (3-20 caracteres, solo letras, números y _)' 
             });
         }
         
-        if (password.length < 6) {
+        if (password.length < 8) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'La contraseña debe tener al menos 6 caracteres' 
+                message: 'La contraseña debe tener al menos 8 caracteres' 
             });
         }
         
+        // Verificar nickname único (case insensitive)
         const { data: existingProfile } = await supabase
             .from('profiles')
             .select('nickname')
-            .eq('nickname', nickname.toLowerCase())
+            .ilike('nickname', nickname)
             .single();
         
         if (existingProfile) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'El nickname ya está en uso' 
+                message: 'El nickname ya está registrado' 
             });
         }
         
-        const uniqueEmail = `${nickname.toLowerCase()}_${Date.now()}@cromwellpay.local`;
+        // Generar datos únicos
+        const uniqueEmail = `${nickname.toLowerCase().replace(/[^a-z0-9]/g, '')}_${Date.now()}@cromwellpay.local`;
         const userId = generarIDUsuario();
         
+        console.log(`📝 Registrando: ${nickname} -> ${uniqueEmail}`);
+        
+        // 1. Crear usuario en auth
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({
             email: uniqueEmail,
             password: password,
@@ -173,25 +196,21 @@ app.post('/api/register', async (req, res) => {
             user_metadata: {
                 nickname: nickname,
                 user_id: userId,
-                cwt: 0,
-                cws: 0,
                 role: 'user',
-                phone: '',
-                province: '',
-                wallet_address: '',
-                notifications: true,
-                created_at: new Date().toISOString()
+                cwt: 0,
+                cws: 0
             }
         });
         
         if (authError) {
-            console.error('❌ Error creando usuario:', authError.message);
+            console.error('❌ Error auth:', authError.message);
             return res.status(400).json({ 
                 success: false, 
-                message: authError.message 
+                message: 'Error al crear cuenta: ' + authError.message 
             });
         }
         
+        // 2. Crear perfil en tabla profiles
         const { error: profileError } = await supabase
             .from('profiles')
             .insert({
@@ -208,15 +227,16 @@ app.post('/api/register', async (req, res) => {
             });
         
         if (profileError) {
+            console.error('❌ Error profile:', profileError);
+            // Limpiar usuario auth si falla
             await supabase.auth.admin.deleteUser(authData.user.id);
             return res.status(400).json({ 
                 success: false, 
-                message: 'Error creando perfil de usuario' 
+                message: 'Error al crear perfil' 
             });
         }
         
-        console.log(`✅ Usuario registrado: ${nickname} (${userId})`);
-        
+        // 3. Crear sesión automática
         const { data: sessionData, error: sessionError } = await supabase.auth.admin.createSession({
             user_id: authData.user.id,
             session_data: {
@@ -224,21 +244,20 @@ app.post('/api/register', async (req, res) => {
             }
         });
         
-        if (sessionError) {
-            console.error('❌ Error creando sesión:', sessionError);
-        }
+        const token = sessionError ? null : sessionData?.session?.access_token;
+        
+        console.log(`✅ Usuario registrado: ${nickname} (${userId})`);
         
         res.json({
             success: true,
-            message: '¡Registro exitoso! Bienvenido a Cromwell Pay.',
+            message: '¡Registro exitoso! Bienvenido.',
             nickname: nickname,
-            token: sessionData?.session?.access_token || null,
+            token: token,
             user: {
-                id: authData.user?.id,
+                id: authData.user.id,
                 nickname: nickname,
                 user_id: userId,
                 role: 'user',
-                verified: true,
                 cwt: 0,
                 cws: 0,
                 phone: '',
@@ -250,7 +269,7 @@ app.post('/api/register', async (req, res) => {
         });
         
     } catch (error) {
-        console.error('❌ Error en registro:', error);
+        console.error('❌ Error registro:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -258,6 +277,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
+// LOGIN SEGURO
 app.post('/api/login', async (req, res) => {
     try {
         const { nickname, password } = req.body;
@@ -269,72 +289,81 @@ app.post('/api/login', async (req, res) => {
             });
         }
         
+        console.log(`🔍 Login intento: ${nickname}`);
+        
+        // Buscar perfil por nickname
         const { data: profile, error: profileError } = await supabase
             .from('profiles')
-            .select('id, nickname')
+            .select('*')
             .eq('nickname', nickname)
             .single();
         
         if (profileError || !profile) {
-            console.error('❌ Usuario no encontrado:', nickname);
+            console.log(`❌ Nickname no encontrado: ${nickname}`);
             return res.status(401).json({ 
                 success: false, 
-                message: 'Nickname o contraseña incorrectos' 
+                message: 'Credenciales incorrectas' 
             });
         }
         
-        const { data: { users } } = await supabase.auth.admin.listUsers();
-        const targetUser = users.find(u => u.id === profile.id);
+        // Obtener email del usuario desde auth
+        const { data: { users }, error: usersError } = await supabase.auth.admin.listUsers();
         
-        if (!targetUser) {
-            console.error('❌ Usuario no encontrado en auth:', nickname);
-            return res.status(401).json({ 
+        if (usersError) {
+            console.error('❌ Error obteniendo usuarios:', usersError);
+            return res.status(500).json({ 
                 success: false, 
-                message: 'Nickname o contraseña incorrectos' 
+                message: 'Error del servidor' 
             });
         }
         
+        const authUser = users.find(u => u.id === profile.id);
+        
+        if (!authUser) {
+            console.error(`❌ Usuario auth no encontrado para: ${nickname}`);
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Credenciales incorrectas' 
+            });
+        }
+        
+        // Intentar login con email y password
         const { data, error } = await supabase.auth.signInWithPassword({
-            email: targetUser.email,
+            email: authUser.email,
             password: password
         });
         
         if (error) {
-            console.error('❌ Error en login:', error.message);
+            console.error(`❌ Login fallido para ${nickname}:`, error.message);
             return res.status(401).json({ 
                 success: false, 
-                message: 'Nickname o contraseña incorrectos' 
+                message: 'Credenciales incorrectas' 
             });
         }
         
-        const { data: fullProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', data.user.id)
-            .single();
+        console.log(`✅ Login exitoso: ${nickname}`);
         
         res.json({
             success: true,
             message: 'Inicio de sesión exitoso',
             token: data.session.access_token,
             user: {
-                id: data.user.id,
-                nickname: fullProfile.nickname,
-                user_id: fullProfile.user_id,
-                role: fullProfile.role,
-                verified: true,
-                cwt: fullProfile.cwt,
-                cws: fullProfile.cws,
-                phone: fullProfile.phone || '',
-                province: fullProfile.province || '',
-                wallet_address: fullProfile.wallet_address || '',
-                notifications: fullProfile.notifications !== false,
-                created_at: fullProfile.created_at
+                id: profile.id,
+                nickname: profile.nickname,
+                user_id: profile.user_id,
+                role: profile.role,
+                cwt: profile.cwt || 0,
+                cws: profile.cws || 0,
+                phone: profile.phone || '',
+                province: profile.province || '',
+                wallet_address: profile.wallet_address || '',
+                notifications: profile.notifications !== false,
+                created_at: profile.created_at
             }
         });
         
     } catch (error) {
-        console.error('❌ Error en login:', error);
+        console.error('❌ Error login:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -342,7 +371,9 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// ========== RUTAS PROTEGIDAS ==========
+// ========== RUTAS PROTEGIDAS PARA USUARIOS ==========
+
+// Verificar token
 app.get('/api/verify-token', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -363,13 +394,12 @@ app.get('/api/verify-token', authenticateToken, async (req, res) => {
         res.json({
             success: true,
             user: {
-                id: user.id,
+                id: profile.id,
                 nickname: profile.nickname,
                 user_id: profile.user_id,
                 role: profile.role,
-                verified: true,
-                cwt: profile.cwt,
-                cws: profile.cws,
+                cwt: profile.cwt || 0,
+                cws: profile.cws || 0,
                 phone: profile.phone || '',
                 province: profile.province || '',
                 wallet_address: profile.wallet_address || '',
@@ -387,6 +417,7 @@ app.get('/api/verify-token', authenticateToken, async (req, res) => {
     }
 });
 
+// Dashboard usuario
 app.get('/api/dashboard', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -404,22 +435,15 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
             });
         }
         
-        const { data: transactions } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(5);
-        
         res.json({
             success: true,
             user: {
-                id: user.id,
+                id: profile.id,
                 nickname: profile.nickname,
                 user_id: profile.user_id,
                 role: profile.role,
-                cwt: profile.cwt,
-                cws: profile.cws,
+                cwt: profile.cwt || 0,
+                cws: profile.cws || 0,
                 phone: profile.phone || '',
                 province: profile.province || '',
                 wallet_address: profile.wallet_address || '',
@@ -430,7 +454,6 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
                 total_balance: (profile.cwt || 0) + (profile.cws || 0),
                 total_cwt: profile.cwt,
                 total_cws: profile.cws,
-                recent_transactions: transactions || [],
                 last_login: new Date().toISOString()
             }
         });
@@ -444,6 +467,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
     }
 });
 
+// Perfil usuario
 app.get('/api/user/profile', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -464,7 +488,7 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
         res.json({
             success: true,
             profile: {
-                id: user.id,
+                id: profile.id,
                 nickname: profile.nickname,
                 user_id: profile.user_id,
                 phone: profile.phone || '',
@@ -485,11 +509,13 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
     }
 });
 
+// Actualizar perfil (usuarios normales)
 app.put('/api/user/profile', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
         const { nickname, phone, province, wallet_address, notifications } = req.body;
         
+        // Validaciones
         if (!nickname || !phone || !province) {
             return res.status(400).json({ 
                 success: false, 
@@ -497,6 +523,7 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             });
         }
         
+        // Verificar que el nickname no exista (excepto para el mismo usuario)
         if (nickname.toLowerCase() !== user.user_metadata?.nickname?.toLowerCase()) {
             const { data: existingProfile } = await supabase
                 .from('profiles')
@@ -508,12 +535,13 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             if (existingProfile) {
                 return res.status(400).json({ 
                     success: false, 
-                    message: 'El nickname ya está en uso por otro usuario' 
+                    message: 'El nickname ya está en uso' 
                 });
             }
         }
         
-        const { error: profileError } = await supabase
+        // Actualizar perfil (SOLO campos permitidos, NO rol)
+        const { error: updateError } = await supabase
             .from('profiles')
             .update({
                 nickname: nickname,
@@ -525,11 +553,12 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             })
             .eq('id', user.id);
         
-        if (profileError) {
-            throw profileError;
+        if (updateError) {
+            throw updateError;
         }
         
-        const { error: authError } = await supabase.auth.updateUser({
+        // Actualizar metadata en auth
+        await supabase.auth.updateUser({
             data: {
                 nickname: nickname,
                 phone: phone,
@@ -538,10 +567,6 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
                 notifications: notifications !== false
             }
         });
-        
-        if (authError) {
-            console.warn('⚠️ Error actualizando auth metadata:', authError.message);
-        }
         
         res.json({
             success: true,
@@ -565,6 +590,7 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
     }
 });
 
+// Balance usuario
 app.get('/api/user/balance', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -602,6 +628,7 @@ app.get('/api/user/balance', authenticateToken, async (req, res) => {
     }
 });
 
+// Cambiar contraseña
 app.post('/api/user/change-password', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -614,32 +641,34 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
             });
         }
         
-        if (newPassword.length < 6) {
+        if (newPassword.length < 8) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'La nueva contraseña debe tener al menos 6 caracteres' 
+                message: 'La nueva contraseña debe tener al menos 8 caracteres' 
             });
         }
         
         if (newPassword !== confirmPassword) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'Las contraseñas nuevas no coinciden' 
+                message: 'Las contraseñas no coinciden' 
             });
         }
         
+        // Obtener usuario auth
         const { data: { users } } = await supabase.auth.admin.listUsers();
-        const targetUser = users.find(u => u.id === user.id);
+        const authUser = users.find(u => u.id === user.id);
         
-        if (!targetUser) {
+        if (!authUser) {
             return res.status(400).json({ 
                 success: false, 
                 message: 'Usuario no encontrado' 
             });
         }
         
+        // Verificar contraseña actual
         const { error: loginError } = await supabase.auth.signInWithPassword({
-            email: targetUser.email,
+            email: authUser.email,
             password: currentPassword
         });
         
@@ -650,6 +679,7 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
             });
         }
         
+        // Actualizar contraseña
         const { error } = await supabase.auth.updateUser({
             password: newPassword
         });
@@ -672,6 +702,7 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
     }
 });
 
+// Logout
 app.post('/api/logout', authenticateToken, async (req, res) => {
     try {
         const { error } = await supabase.auth.signOut();
@@ -694,7 +725,9 @@ app.post('/api/logout', authenticateToken, async (req, res) => {
     }
 });
 
-// ========== RUTAS DE ADMIN ==========
+// ========== RUTAS EXCLUSIVAS PARA ADMIN (SOLO Ersatz) ==========
+
+// Listar todos los usuarios
 app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { search = '', page = 1, limit = 20 } = req.query;
@@ -733,19 +766,22 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
     }
 });
 
+// Actualizar balance de usuario (SOLO ADMIN)
 app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const adminUser = req.user;
         const { userId } = req.params;
         const { cwt, cws, operation, reason } = req.body;
         
+        // Validar operación
         if (!['add', 'subtract', 'set'].includes(operation)) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'Operación no válida. Use: add, subtract o set' 
+                message: 'Operación inválida' 
             });
         }
         
+        // Obtener usuario
         const { data: targetUser, error: userError } = await supabase
             .from('profiles')
             .select('*')
@@ -759,23 +795,22 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
             });
         }
         
-        const currentCWT = targetUser.cwt || 0;
-        const currentCWS = targetUser.cws || 0;
-        
-        let newCWT = currentCWT;
-        let newCWS = currentCWS;
+        // Calcular nuevo balance
+        let newCWT = targetUser.cwt || 0;
+        let newCWS = targetUser.cws || 0;
         
         if (operation === 'add') {
             newCWT += parseFloat(cwt) || 0;
             newCWS += parseInt(cws) || 0;
         } else if (operation === 'subtract') {
-            newCWT = Math.max(currentCWT - (parseFloat(cwt) || 0), 0);
-            newCWS = Math.max(currentCWS - (parseInt(cws) || 0), 0);
-        } else {
+            newCWT = Math.max(newCWT - (parseFloat(cwt) || 0), 0);
+            newCWS = Math.max(newCWS - (parseInt(cws) || 0), 0);
+        } else if (operation === 'set') {
             newCWT = Math.max(parseFloat(cwt) || 0, 0);
             newCWS = Math.max(parseInt(cws) || 0, 0);
         }
         
+        // Actualizar balance
         const { error: updateError } = await supabase
             .from('profiles')
             .update({
@@ -789,43 +824,37 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
             throw updateError;
         }
         
-        const { error: transactionError } = await supabase
-            .from('transactions')
-            .insert({
-                transaction_id: `ADMIN-${Date.now()}`,
-                user_id: userId,
-                type: `admin_${operation}`,
-                status: 'completed',
-                amount_cwt: operation === 'set' ? newCWT - currentCWT : parseFloat(cwt) || 0,
-                amount_cws: operation === 'set' ? newCWS - currentCWS : parseInt(cws) || 0,
-                description: reason || 'Actualización administrativa de balance',
-                admin_id: adminUser.id,
-                created_at: new Date().toISOString(),
-                completed_at: new Date().toISOString()
-            });
-        
-        if (transactionError) {
-            console.error('❌ Error creando transacción:', transactionError);
-        }
-        
-        const { error: historyError } = await supabase
+        // Registrar en balance_history
+        await supabase
             .from('balance_history')
             .insert({
                 user_id: userId,
-                previous_cwt: currentCWT,
-                previous_cws: currentCWS,
+                previous_cwt: targetUser.cwt || 0,
+                previous_cws: targetUser.cws || 0,
                 new_cwt: newCWT,
                 new_cws: newCWS,
                 operation: operation,
                 source: 'admin',
                 admin_id: adminUser.id,
-                reason: reason || 'Actualización administrativa',
+                reason: reason || 'Ajuste administrativo',
                 created_at: new Date().toISOString()
             });
         
-        if (historyError) {
-            console.error('❌ Error registrando historial:', historyError);
-        }
+        // Crear transacción de registro
+        await supabase
+            .from('transactions')
+            .insert({
+                transaction_id: `ADJ-${Date.now()}`,
+                user_id: userId,
+                type: 'admin_adjustment',
+                status: 'completed',
+                amount_cwt: newCWT - (targetUser.cwt || 0),
+                amount_cws: newCWS - (targetUser.cws || 0),
+                description: reason || 'Ajuste de balance por administrador',
+                admin_id: adminUser.id,
+                created_at: new Date().toISOString(),
+                completed_at: new Date().toISOString()
+            });
         
         res.json({
             success: true,
@@ -833,20 +862,17 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
             user: {
                 id: targetUser.id,
                 nickname: targetUser.nickname,
-                user_id: targetUser.user_id,
                 balance: {
-                    previous: { cwt: currentCWT, cws: currentCWS },
+                    previous: { cwt: targetUser.cwt || 0, cws: targetUser.cws || 0 },
                     current: { cwt: newCWT, cws: newCWS },
-                    operation,
-                    reason: reason || 'Actualización administrativa',
-                    updated_by: adminUser.user_metadata?.nickname || adminUser.email,
-                    timestamp: new Date().toISOString()
+                    operation: operation,
+                    reason: reason || 'Ajuste administrativo'
                 }
             }
         });
         
     } catch (error) {
-        console.error('❌ Error actualizando balance de usuario:', error);
+        console.error('❌ Error actualizando balance:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -854,81 +880,7 @@ app.put('/api/admin/users/:userId/balance', authenticateToken, requireAdmin, asy
     }
 });
 
-app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async (req, res) => {
-    try {
-        const adminUser = req.user;
-        const { userId } = req.params;
-        const { role } = req.body;
-        
-        if (!['admin', 'user', 'moderator'].includes(role)) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Rol inválido. Roles permitidos: admin, user, moderator' 
-            });
-        }
-        
-        const { data: targetUser, error: userError } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', userId)
-            .single();
-        
-        if (userError || !targetUser) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Usuario no encontrado' 
-            });
-        }
-        
-        const { error } = await supabase
-            .from('profiles')
-            .update({
-                role: role,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', userId);
-        
-        if (error) {
-            throw error;
-        }
-        
-        const { error: authError } = await supabase.auth.admin.updateUserById(
-            userId,
-            {
-                user_metadata: {
-                    ...targetUser.user_metadata,
-                    role: role
-                }
-            }
-        );
-        
-        if (authError) {
-            console.warn('⚠️ Error actualizando auth metadata:', authError.message);
-        }
-        
-        res.json({
-            success: true,
-            message: `Rol actualizado a ${role}`,
-            user: {
-                id: targetUser.id,
-                nickname: targetUser.nickname,
-                user_id: targetUser.user_id,
-                previous_role: targetUser.role,
-                new_role: role,
-                updated_by: adminUser.user_metadata?.nickname || adminUser.email,
-                timestamp: new Date().toISOString()
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error cambiando rol:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
+// Detalles específicos de usuario
 app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { userId } = req.params;
@@ -946,13 +898,15 @@ app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req,
             });
         }
         
+        // Obtener transacciones del usuario
         const { data: transactions } = await supabase
             .from('transactions')
             .select('*')
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
-            .limit(20);
+            .limit(10);
         
+        // Obtener historial de balance
         const { data: balanceHistory } = await supabase
             .from('balance_history')
             .select('*')
@@ -964,16 +918,11 @@ app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req,
             success: true,
             user: profile,
             transactions: transactions || [],
-            balance_history: balanceHistory || [],
-            statistics: {
-                total_transactions: transactions?.length || 0,
-                total_deposits: transactions?.filter(t => t.type.includes('deposit')).length || 0,
-                total_withdrawals: transactions?.filter(t => t.type.includes('withdrawal')).length || 0
-            }
+            balance_history: balanceHistory || []
         });
         
     } catch (error) {
-        console.error('❌ Error obteniendo detalles de usuario:', error);
+        console.error('❌ Error obteniendo detalles:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error interno del servidor' 
@@ -981,18 +930,19 @@ app.get('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req,
     }
 });
 
-// ========== RUTAS PARA TRANSACCIONES ==========
-app.get('/api/user/transactions', authenticateToken, async (req, res) => {
+// ========== RUTAS DE TRANSACCIONES (SOLO ADMIN) ==========
+
+// Listar transacciones
+app.get('/api/transactions', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const user = req.user;
-        const { type, status, startDate, endDate, page = 1, limit = 20 } = req.query;
+        const { userId, type, status, startDate, endDate, page = 1, limit = 20 } = req.query;
         const offset = (page - 1) * limit;
         
         let query = supabase
             .from('transactions')
-            .select('*', { count: 'exact' })
-            .eq('user_id', user.id);
+            .select('*', { count: 'exact' });
         
+        if (userId) query = query.eq('user_id', userId);
         if (type) query = query.eq('type', type);
         if (status) query = query.eq('status', status);
         if (startDate) query = query.gte('created_at', startDate);
@@ -1006,22 +956,12 @@ app.get('/api/user/transactions', authenticateToken, async (req, res) => {
             throw error;
         }
         
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('cwt, cws')
-            .eq('id', user.id)
-            .single();
-        
         res.json({
             success: true,
             transactions: transactions || [],
             total: count || 0,
             current_page: parseInt(page),
-            total_pages: Math.ceil((count || 0) / limit),
-            balance: {
-                cwt: profile?.cwt || 0,
-                cws: profile?.cws || 0
-            }
+            total_pages: Math.ceil((count || 0) / limit)
         });
         
     } catch (error) {
@@ -1033,95 +973,35 @@ app.get('/api/user/transactions', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/user/transactions', authenticateToken, async (req, res) => {
-    try {
-        const user = req.user;
-        const { type, amount_cwt, amount_cws, description, metadata } = req.body;
-        
-        if (!type || (!amount_cwt && !amount_cws)) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Tipo y monto son requeridos' 
-            });
-        }
-        
-        if (type === 'withdrawal') {
-            const { data: profile } = await supabase
-                .from('profiles')
-                .select('cwt, cws')
-                .eq('id', user.id)
-                .single();
-            
-            if ((amount_cwt && profile.cwt < amount_cwt) || 
-                (amount_cws && profile.cws < amount_cws)) {
-                return res.status(400).json({ 
-                    success: false, 
-                    message: 'Balance insuficiente' 
-                });
-            }
-        }
-        
-        const transactionData = {
-            transaction_id: `TXN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            user_id: user.id,
-            type: type,
-            status: 'pending',
-            amount_cwt: parseFloat(amount_cwt) || 0,
-            amount_cws: parseInt(amount_cws) || 0,
-            description: description || '',
-            metadata: metadata || {},
-            created_at: new Date().toISOString()
-        };
-        
-        const { data: transaction, error } = await supabase
-            .from('transactions')
-            .insert(transactionData)
-            .select()
-            .single();
-        
-        if (error) {
-            throw error;
-        }
-        
-        res.json({
-            success: true,
-            message: 'Transacción creada exitosamente',
-            transaction: transaction
-        });
-        
-    } catch (error) {
-        console.error('❌ Error creando transacción:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Error interno del servidor' 
-        });
-    }
-});
-
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
-    console.log(`🚀 Cromwell Pay ejecutándose en http://localhost:${PORT}`);
-    console.log(`📁 Archivos estáticos servidos desde: ${path.join(__dirname, 'public')}`);
-    
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
-        console.error('\n❌ ADVERTENCIA: Variables de entorno faltantes');
-        console.log('   Crea un archivo .env con:');
-        console.log('   SUPABASE_URL=https://tu-proyecto.supabase.co');
-        console.log('   SUPABASE_SERVICE_KEY=tu-service-role-key');
-        console.log('   PORT=3000');
-    } else {
-        console.log('\n✅ Variables de entorno configuradas correctamente');
-    }
-    
-    console.log('\n🌐 URLs disponibles:');
-    console.log(`   • Login: http://localhost:${PORT}/login.html`);
-    console.log(`   • Registro: http://localhost:${PORT}/register.html`);
-    console.log(`   • Dashboard: http://localhost:${PORT}/dashboard.html`);
-    console.log(`   • Admin: http://localhost:${PORT}/admin.html`);
-    
-    console.log('\n🔧 Endpoints API:');
-    console.log('   • POST /api/register - Registrar usuario');
-    console.log('   • POST /api/login - Iniciar sesión');
-    console.log('   • GET  /api/dashboard - Panel de usuario');
-    console.log('   • GET  /api/admin/users - Panel de administración');
+    console.log('===========================================');
+    console.log('🚀 CROMWELL PAY - SISTEMA SEGURO INICIADO');
+    console.log('===========================================');
+    console.log(`🌐 URL: http://localhost:${PORT}`);
+    console.log(`📁 Archivos: ${path.join(__dirname, 'public')}`);
+    console.log(`🔐 Admin: Ersatz`);
+    console.log('');
+    console.log('✅ ENDPOINTS PÚBLICOS:');
+    console.log('   GET  /api/status');
+    console.log('   POST /api/register');
+    console.log('   POST /api/login');
+    console.log('');
+    console.log('✅ ENDPOINTS USUARIOS (autenticados):');
+    console.log('   GET  /api/verify-token');
+    console.log('   GET  /api/dashboard');
+    console.log('   GET  /api/user/profile');
+    console.log('   PUT  /api/user/profile');
+    console.log('   GET  /api/user/balance');
+    console.log('   POST /api/user/change-password');
+    console.log('   POST /api/logout');
+    console.log('');
+    console.log('🔐 ENDPOINTS ADMIN (SOLO Ersatz):');
+    console.log('   GET  /api/admin/users');
+    console.log('   GET  /api/admin/users/:userId');
+    console.log('   PUT  /api/admin/users/:userId/balance');
+    console.log('   GET  /api/transactions');
+    console.log('');
+    console.log('⚡ SISTEMA LISTO');
+    console.log('===========================================');
 });
